@@ -1,0 +1,2 @@
+# tileset-generator
+使用Stable Diffusion生成tile，然后使用python脚本生成可以用于游戏引擎的完整图集，本科人工智能专业课程设计
