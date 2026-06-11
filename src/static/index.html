@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tileset Generator</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <!-- ── 顶部标题栏 ── -->
+    <header class="header">
+        <h1>🎨 Tileset Generator</h1>
+        <span class="subtitle">基于 Stable Diffusion 的自动 Autotile 生成系统</span>
+        <button class="settings-btn" title="设置">⚙️</button>
+    </header>
+
+    <!-- ── 主体区域 ── -->
+    <main class="main-container">
+
+        <!-- 已生成材质侧边栏 -->
+        <aside class="sidebar" id="sidebar">
+            <h3>已生成材质</h3>
+            <div class="material-list" id="materialList">
+                <p class="placeholder-text">尚未生成任何材质</p>
+            </div>
+            <div class="selection-info" id="selectionInfo">
+                <div class="selection-row">
+                    <span class="label-bg">Background:</span>
+                    <span id="selectedBg" class="selected-name">未选择</span>
+                </div>
+                <div class="selection-row">
+                    <span class="label-sf">Surface:</span>
+                    <span id="selectedSf" class="selected-name">未选择</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- 对话区域 -->
+        <section class="chat-area">
+            <div class="chat-messages" id="chatMessages">
+                <div class="message system">
+                    <div class="message-content">
+                        👋 欢迎使用 Tileset Generator!<br>
+                        输入材质描述并点击 <b>"生成材质"</b> 来创建纹理。<br>
+                        选择 <b>1 张 Background</b> + <b>1 张 Surface</b> 后，
+                        点击 <b>"生成 Autotile"</b> 合成 47-tile 图集。
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- ── 底部输入栏 ── -->
+    <footer class="input-bar">
+        <div class="input-row">
+            <input
+                type="text"
+                id="promptInput"
+                class="prompt-input"
+                placeholder="输入提示词描述材质 (如: 草地, 沙地, 水面...)"
+                autocomplete="off"
+            >
+        </div>
+        <div class="button-row">
+            <div class="tile-size-selector">
+                <label for="tileSize">Tile 尺寸:</label>
+                <select id="tileSize">
+                    <option value="16">16px</option>
+                    <option value="32" selected>32px</option>
+                    <option value="64">64px</option>
+                    <option value="128">128px</option>
+                </select>
+            </div>
+            <button id="btnGenerate" class="btn btn-primary">
+                🎨 生成材质
+            </button>
+            <button id="btnTileset" class="btn btn-success" disabled>
+                🧩 生成 Autotile
+            </button>
+        </div>
+    </footer>
+
+    <!-- ── Scripts ── -->
+    <script src="/js/ws.js"></script>
+    <script src="/js/ui.js"></script>
+    <script src="/js/chat.js"></script>
+</body>
+</html>

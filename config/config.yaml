@@ -1,0 +1,29 @@
+# Tileset Generator - 主配置文件
+# 基于 Stable Diffusion + ComfyUI 的自动 47-tile Autotile 生成系统
+
+# ComfyUI 服务配置
+comfyui:
+  base_url: "http://127.0.0.1:8188"     # ComfyUI API 地址 (可被 .env 覆盖)
+  timeout: 300                            # 生成超时 (秒)
+  poll_interval: 1.0                      # 轮询间隔 (秒)
+
+# SD 生成默认参数 (固定 512×512)
+generation:
+  default_steps: 20
+  default_cfg: 8.0
+  default_sampler: "euler"
+  default_scheduler: "simple"
+
+# Tileset 拼合参数
+tileset:
+  output_format: "png"                    # 输出格式
+
+# 输出 tile 尺寸选项 (SD 生成 512px 后缩放到目标尺寸)
+output_tile_sizes: [16, 32, 64, 128]     # 可选像素尺寸列表
+default_tile_size: 32                      # 默认输出 tile 尺寸 (px)
+
+# 服务配置
+server:
+  host: "127.0.0.1"
+  port: 8000
+  cors_origins: ["*"]

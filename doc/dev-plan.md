@@ -29,16 +29,99 @@
 
 ### 1.1 项目目标
 
-构建一套自动化工具链，使用 Stable Diffusion 生成游戏 tile（瓦片）纹理，并将多个 tile 自动拼接为游戏引擎可直接使用的完整 tileset 图集（sprite sheet / texture atlas）。
+构建一套自动化工具链，使用 Stable Diffusion 生成完整的 **47-tile 自动瓦片集（Autotile Set）**，输出可直接用于游戏引擎（如 RPG Maker、Unity、Godot）的 tileset 图集。
 
 ### 1.2 核心功能
 
 | 功能 | 描述 |
 |------|------|
-| **材质生成** | 用户输入自然语言提示词，系统调用 ComfyUI + SD 生成单张 tile 纹理 |
-| **Tileset 拼合** | 将多张已生成的 tile 纹理自动拼接为符合规范的 tileset 图集 |
+| **材质生成** | 用户输入自然语言提示词，系统调用 ComfyUI + SD 生成基础材质纹理（background + surface） |
+| **Autotile 合成** | 基于 bitmask 自动瓦片算法，将材质纹理合成为包含全部 47 种邻接变体的完整 autotile 图集 |
 | **对话式交互** | 通过 Web 对话界面完成所有操作，降低使用门槛 |
 | **实时反馈** | 通过 WebSocket 推送生成进度，用户可实时查看生成状态 |
+
+### 1.3 47-Tile Autotile 格式说明
+
+#### 双层 Tile 结构
+
+每个 tile 由 **两个图层** 组成：
+
+```
+┌──────────────────────┐
+│      Surface         │  ← 表面层（边缘过渡材质，如草地边缘）
+│   ┌──────────────┐   │
+│   │              │   │
+│   │  Background  │   │  ← 背景层（核心填充材质，如泥土）
+│   │              │   │
+│   └──────────────┘   │
+│                      │
+└──────────────────────┘
+```
+
+- **Background（背景层）**：tile 的基础填充材质，占据 tile 中心区域
+- **Surface（表面层）**：包裹在 background 周围，负责处理与相邻 tile 的过渡
+
+#### 表面层 8 子区域划分
+
+Surface 层被切割为 **8 个独立子区域**：
+
+```
+         左上角      上边缘      右上角
+       ┌─────────┬─────────┬─────────┐
+       │  sub[0] │  sub[1] │  sub[2] │
+       │  (TL)   │  (T)    │  (TR)   │
+       ├─────────┼─────────┼─────────┤
+       │  sub[3] │         │  sub[4] │
+左边缘  │  (L)    │  BG     │  (R)    │  右边缘
+       ├─────────┼─────────┼─────────┤
+       │  sub[5] │  sub[6] │  sub[7] │
+       │  (BL)   │  (B)    │  (BR)   │
+       └─────────┴─────────┴─────────┘
+         左下角      下边缘      右下角
+```
+
+| 索引 | 名称 | 位置 | 显示条件 |
+|------|------|------|---------|
+| sub[0] | TL (Top-Left) | 左上角 | 上邻和左邻均为同材质时隐藏，否则显示 |
+| sub[1] | T (Top) | 上边缘 | 上邻为同材质时隐藏，否则显示 |
+| sub[2] | TR (Top-Right) | 右上角 | 上邻和右邻均为同材质时隐藏，否则显示 |
+| sub[3] | L (Left) | 左边缘 | 左邻为同材质时隐藏，否则显示 |
+| sub[4] | R (Right) | 右边缘 | 右邻为同材质时隐藏，否则显示 |
+| sub[5] | BL (Bottom-Left) | 左下角 | 下邻和左邻均为同材质时隐藏，否则显示 |
+| sub[6] | B (Bottom) | 下边缘 | 下邻为同材质时隐藏，否则显示 |
+| sub[7] | BR (Bottom-Right) | 右下角 | 下邻和右邻均为同材质时隐藏，否则显示 |
+
+#### Bitmask 规则
+
+对每个 tile 检查其 **上下左右 4 个邻居**（4-bit 邻接）：
+
+```
+      [上]
+       │
+[左]── TILE ──[右]
+       │
+      [下]
+```
+
+- 若某方向邻居为**同材质** → 该方向 bit = 1 → 对应边缘和相邻两角**隐藏**（显示 background）
+- 若某方向邻居为**不同材质** → 该方向 bit = 0 → 对应边缘和相邻两角**显示**（显示 surface）
+
+**4 个方向 × 每个 tile 8 个子区域 = 2^4 = 16 种基本邻接配置。**  
+考虑子区域级别的独立性（角与边的组合），总计 **47 种有效组合**，涵盖所有可能的邻接过渡情况。
+
+#### 47-Tile 布局示意
+
+最终的 autotile 图集将 47 个变体 tile 按固定标准布局排列。游戏引擎通过 bitmask 索引查找对应位置的 tile，实现自动边缘过渡。
+
+```
+   col0   col1   col2   col3   col4   col5   col6   ...
+  ┌──────┬──────┬──────┬──────┬──────┬──────┬──────┐
+  │  0   │  1   │  2   │  3   │ ...  │ ...  │  46  │  ← 47 tiles total
+  └──────┴──────┴──────┴──────┴──────┴──────┴──────┘
+  (紧密排列，无缝隙，tile 之间间距为 0)
+```
+
+> **注意**：具体的 47-tile 布局标准将在实现阶段参考目标游戏引擎的 autotile 规范确定。常见参考：RPG Maker VX/Ace Autotile 格式（使用 3×2 子 tile 结构，但核心原理相同）。
 
 ---
 
@@ -62,46 +145,48 @@
 ## 3. 系统架构
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                      用户浏览器                            │
-│  ┌────────────────────────────────────────────────────┐  │
-│  │              对话界面 (Chat UI)                      │  │
-│  │  ┌──────────┐  ┌──────────┐  ┌──────────────────┐ │  │
-│  │  │ 生成材质  │  │ 生成     │  │  消息/图片展示区   │ │  │
-│  │  │ (按钮1)   │  │ Tileset  │  │                  │ │  │
-│  │  │           │  │ (按钮2)   │  │  [图片预览]      │ │  │
-│  │  └──────────┘  └──────────┘  └──────────────────┘ │  │
-│  └────────────────────────────────────────────────────┘  │
-└──────────────┬────────────────────────────┬──────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                         用户浏览器                                │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │                   对话界面 (Chat UI)                         │  │
+│  │  ┌──────────┐  ┌──────────┐  ┌──────────────────────────┐  │  │
+│  │  │ 生成材质  │  │ 生成     │  │  消息 / 图片展示区        │  │  │
+│  │  │ (按钮1)   │  │ Tileset  │  │                          │  │  │
+│  │  │           │  │ (按钮2)   │  │  [512px 原始图预览]      │  │  │
+│  │  └──────────┘  └──────────┘  │  [47-tile Autotile 预览]  │  │  │
+│  │                               └──────────────────────────┘  │  │
+│  └────────────────────────────────────────────────────────────┘  │
+└──────────────┬────────────────────────────┬──────────────────────┘
                │  HTTP REST + WebSocket      │
                ▼                             ▼
-┌──────────────────────────────────────────────────────────┐
-│                    FastAPI 服务层                          │
-│  ┌─────────────┐  ┌──────────────┐  ┌────────────────┐  │
-│  │ /api/chat   │  │ /api/generate│  │ /api/tileset   │  │
-│  │ (对话接口)   │  │ (材质生成)    │  │ (Tileset拼合)  │  │
-│  └──────┬──────┘  └──────┬───────┘  └───────┬────────┘  │
-│         │                │                   │           │
-│  ┌──────┴────────────────┴───────────────────┴────────┐  │
-│  │              核心业务逻辑层                          │  │
-│  │  ┌────────────┐  ┌────────────┐  ┌──────────────┐ │  │
-│  │  │ ComfyUI    │  │ Tileset    │  │ Image        │ │  │
-│  │  │ Client     │  │ Builder    │  │ Processor    │ │  │
-│  │  └─────┬──────┘  └────────────┘  └──────────────┘ │  │
-│  └────────┼───────────────────────────────────────────┘  │
-└───────────┼──────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                       FastAPI 服务层                              │
+│  ┌─────────────┐  ┌──────────────┐  ┌────────────────────────┐  │
+│  │ /api/chat   │  │ /api/generate│  │ /api/tileset           │  │
+│  │ (对话接口)   │  │ (材质生成)    │  │ (Autotile 47-tile合成) │  │
+│  └──────┬──────┘  └──────┬───────┘  └───────┬────────────────┘  │
+│         │                │                   │                   │
+│  ┌──────┴────────────────┴───────────────────┴────────────────┐  │
+│  │                   核心业务逻辑层                             │  │
+│  │  ┌────────────┐  ┌──────────────┐  ┌────────────────────┐ │  │
+│  │  │ ComfyUI    │  │ Autotile     │  │ Image              │ │  │
+│  │  │ Client     │  │ Engine       │  │ Processor          │ │  │
+│  │  │ (SD 调用)   │  │ (Bitmask合成) │  │ (缩放/裁切/拼接)    │ │  │
+│  │  └─────┬──────┘  └──────────────┘  └────────────────────┘ │  │
+│  └────────┼───────────────────────────────────────────────────┘  │
+└───────────┼──────────────────────────────────────────────────────┘
             │  HTTP (REST API)
             ▼
-┌──────────────────────────────────────────────────────────┐
-│                    ComfyUI 服务                            │
-│  ┌──────────────────────────────────────────────────┐    │
-│  │  /api/prompt  │  /api/history  │  /api/view      │    │
-│  │  (递交工作流)   │  (查询历史)     │  (获取图片)      │    │
-│  └──────────────────────────────────────────────────┘    │
-│  ┌──────────────────────────────────────────────────┐    │
-│  │              SD3.5 Medium + LoRA                  │    │
-│  └──────────────────────────────────────────────────┘    │
-└──────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                       ComfyUI 服务                                │
+│  ┌──────────────────────────────────────────────────────────┐    │
+│  │  /api/prompt   │  /api/history   │  /api/view             │    │
+│  │  (递交工作流)    │  (查询历史)      │  (获取图片)             │    │
+│  └──────────────────────────────────────────────────────────┘    │
+│  ┌──────────────────────────────────────────────────────────┐    │
+│  │                SD3.5 Medium + LoRA                        │    │
+│  └──────────────────────────────────────────────────────────┘    │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ### 架构说明
@@ -109,6 +194,7 @@
 - **前后端分离**：FastAPI 提供 REST API，前端为纯静态页面，通过 AJAX + WebSocket 通信
 - **ComfyUI 作为独立服务**：ComfyUI 在本地或远端独立运行，FastAPI 通过其 REST API 递交工作流并获取结果
 - **异步非阻塞**：图像生成是长时间任务，使用 WebSocket 推送进度，避免 HTTP 超时
+- **Autotile Engine**：核心模块，负责根据 bitmask 规则将 SD 生成的材质纹理合成为 47-tile autotile 图集
 
 ---
 
@@ -144,7 +230,8 @@ tileset-generator/
 │   │   ├── __init__.py
 │   │   ├── comfy_client.py         # ComfyUI API 客户端
 │   │   ├── workflow_editor.py      # 工作流 JSON 动态编辑器
-│   │   ├── tileset_builder.py      # Tileset 拼合逻辑
+│   │   ├── autotile_engine.py      # Autotile Bitmask 合成引擎 (核心)
+│   │   ├── tileset_builder.py      # 47-tile 图集拼接
 │   │   └── image_processor.py      # 通用图像处理工具
 │   └── static/                     # 前端静态资源
 │       ├── index.html              # 对话界面主页
@@ -156,8 +243,8 @@ tileset-generator/
 │           └── ui.js               # UI 交互逻辑
 │
 ├── output/                         # 生成输出目录 (gitignore)
-│   ├── textures/                   # 单张 tile 纹理
-│   └── tilesets/                   # 拼接完成的 tileset 图集
+│   ├── textures/                   # SD 生成的原始 512px 纹理
+│   └── tilesets/                   # 最终 47-tile autotile 图集
 │
 ├── tests/                          # 测试目录
 │   ├── __init__.py
@@ -201,12 +288,13 @@ generation:
   default_sampler: "euler"
   default_scheduler: "simple"
 
-# Tileset 默认参数
+# Tileset 拼合参数
 tileset:
-  default_columns: 4                      # 默认列数
-  default_tile_size: 512                  # 每个 tile 的尺寸 (px)
   output_format: "png"                    # 输出格式
-  padding: 0                              # tile 间距 (px)
+
+# 输出 tile 尺寸选项 (SD 生成 512px 后缩放到目标尺寸)
+output_tile_sizes: [16, 32, 64, 128]     # 可选像素尺寸列表
+default_tile_size: 32                      # 默认输出 tile 尺寸 (px)
 
 # 服务配置
 server:
@@ -337,23 +425,44 @@ class WorkflowEditor:
 
 #### 5.3.1 通用图像处理器 (`src/services/image_processor.py`)
 
+> **关键流程**: SD 生成固定 512×512 的原始纹理，然后通过 `downscale()` 缩放到目标像素尺寸（16/32/64/128）。使用 NEAREST 插值以保持像素风格的锐利边缘。
+
 ```python
 class ImageProcessor:
     """提供 tile 纹理的预处理与后处理"""
 
+    # 支持的输出 tile 尺寸
+    VALID_TILE_SIZES = {16, 32, 64, 128}
+
+    @staticmethod
+    def downscale(image: Image, target_size: int) -> Image:
+        """
+        将 512px 的 SD 输出缩放到目标像素尺寸。
+        使用 NEAREST 插值保持像素艺术风格的锐利边缘。
+        target_size 必须为 16, 32, 64, 128 之一。
+        """
+
+    @staticmethod
+    def nine_slice(image: Image) -> dict[str, Image]:
+        """
+        将 surface 纹理按 3×3 九宫格切割为 8 个子区域。
+        
+        输入: surface 纹理 (方形图片)
+        ┌─────────────┐
+        │ TL │  T  │ TR │
+        ├────┼─────┼────┤
+        │ L  │(BG) │ R  │  ← 中心区域被 background 覆盖，丢弃
+        ├────┼─────┼────┤
+        │ BL │  B  │ BR │
+        └─────────────┘
+        
+        返回: {"TL": img, "T": img, "TR": img, "L": img, 
+                "R": img, "BL": img, "B": img, "BR": img}
+        """
+
     @staticmethod
     def resize(image: Image, size: tuple[int, int]) -> Image:
-        """缩放图像到指定尺寸（使用 NEAREST 保持像素风格）"""
-
-    @staticmethod
-    def trim_transparent(image: Image) -> Image:
-        """裁切透明边缘"""
-
-    @staticmethod
-    def add_border(image: Image, border_size: int,
-                   color: tuple[int, int, int, int] = (0,0,0,0)
-                   ) -> Image:
-        """为 tile 添加边框"""
+        """通用缩放（使用 NEAREST 保持像素风格）"""
 
     @staticmethod
     def ensure_rgba(image: Image) -> Image:
@@ -364,69 +473,167 @@ class ImageProcessor:
         """校验 tile 尺寸是否符合预期"""
 ```
 
-#### 5.3.2 Tileset 拼合器 (`src/services/tileset_builder.py`)
+#### 5.3.2 Autotile 合成引擎 (`src/services/autotile_engine.py`)
 
-**核心功能**：将多张独立的 tile 纹理拼接为一张完整的 tileset 图集。
+**核心功能**：基于 bitmask 邻接规则，将 background 纹理与 surface 的 8 个子区域组合为 **47 种邻接变体**。
+
+**Bitmask 模型**：
+
+```
+每个 tile 的邻接状态由 4 bit 表示 (上/下/左/右):
+
+  bit[0] = 上邻是否为同材质 (1=是, 0=否)
+  bit[1] = 下邻是否为同材质
+  bit[2] = 左邻是否为同材质
+  bit[3] = 右邻是否为同材质
+
+  4-bit → 16 种邻接掩码 (0b0000 ~ 0b1111)
+  但考虑 8 个子区域的独立显示逻辑 → 总计 47 种有效组合
+```
+
+**子区域显示规则**：
+
+| 子区域 | 显示条件（surface 可见） |
+|--------|------------------------|
+| TL (左上角) | 上邻=0 **且** 左邻=0 |
+| T (上边缘) | 上邻=0 |
+| TR (右上角) | 上邻=0 **且** 右邻=0 |
+| L (左边缘) | 左邻=0 |
+| R (右边缘) | 右邻=0 |
+| BL (左下角) | 下邻=0 **且** 左邻=0 |
+| B (下边缘) | 下邻=0 |
+| BR (右下角) | 下邻=0 **且** 右邻=0 |
+
+```python
+class AutotileEngine:
+    """
+    根据 bitmask 规则生成全部 47 个 autotile 变体。
+
+    输入:
+      - background: 背景材质纹理 (方形, 如草地中心的泥土)
+      - surface_parts: 从 nine_slice 切割出的 8 个子区域
+                        {"TL", "T", "TR", "L", "R", "BL", "B", "BR"}
+
+    输出:
+      - 47 个 tile 变体, 每个 tile = background + 根据 bitmask 
+        选择性地叠加对应 surface 子区域
+    """
+
+    # 47 种有效 bitmask 配置
+    # 每种配置定义了哪些子区域显示 surface (其余区域显示 background)
+    VALID_MASKS: list[int]  # 47 个 bitmask 值
+
+    def __init__(self, background: Image, surface_parts: dict[str, Image]):
+        self.background = background
+        self.surface_parts = surface_parts
+
+    def compute_visible_parts(self, mask: int) -> set[str]:
+        """
+        根据 bitmask 计算应显示的子区域集合。
+        
+        mask 编码:
+          bit 0 (0x1): 上   bit 1 (0x2): 下
+          bit 2 (0x4): 左   bit 3 (0x8): 右
+
+        返回值如: {"T", "TR", "R"} (表示上、右上、右显示 surface)
+        """
+
+    def compose_tile(self, mask: int) -> Image:
+        """
+        为给定 bitmask 合成一个完整的 tile:
+          1. 以 background 为底图
+          2. 将 compute_visible_parts(mask) 中的子区域覆盖到底图上
+          3. 返回合成后的 tile
+        """
+
+    def generate_all(self) -> list[tuple[int, Image]]:
+        """
+        遍历全部 47 种有效 mask, 返回 (mask, tile_image) 列表。
+        mask 同时作为 tileset 中的索引键, 供游戏引擎查表。
+        """
+```
+
+#### 5.3.3 Tileset 拼合器 (`src/services/tileset_builder.py`)
+
+**核心功能**：将 `AutotileEngine` 生成的 47 个 tile 变体，按固定标准布局拼接为最终的 **47-tile autotile 图集**。
 
 ```python
 class TilesetBuilder:
-    """将多张 tile 纹理拼接为 tileset 图集"""
+    """
+    将 47 个 autotile 变体按标准布局拼接为 tileset 图集。
+    
+    布局: 紧密排列，tile 之间无缝隙 (padding = 0)
+    由 tile 数量 (47) 和标准布局规则确定列数/行数
+    """
 
-    def __init__(self, tile_size: int = 512, columns: int = 4,
-                 padding: int = 0):
+    def __init__(self, tile_size: int):
         self.tile_size = tile_size
-        self.columns = columns
-        self.padding = padding
+        self.tiles: dict[int, Image] = {}  # mask → tile
 
-    def add_tile(self, image: Image, position: int | None = None):
-        """添加一个 tile 到指定位置（或自动追加）"""
-
-    def remove_tile(self, position: int):
-        """移除指定位置的 tile"""
+    def add_tile(self, mask: int, tile: Image):
+        """添加一个 autotile 变体"""
 
     def build(self) -> Image:
         """
-        将所有 tile 拼接为一张大图。
-
-        布局:
-        ┌────┬────┬────┬────┐
-        │ 0  │ 1  │ 2  │ 3  │  ← 每行 columns 个 tile
-        ├────┼────┼────┼────┤
-        │ 4  │ 5  │ 6  │ 7  │
-        └────┴────┴────┴────┘
-
-        输出尺寸 = (columns * tile_size, ceil(n/columns) * tile_size)
+        按标准 47-tile 布局拼接为完整图集。
+        
+        输出示例 (假设 47 tiles, 具体列数依标准而定):
+        ┌────┬────┬────┬────┬────┬────┬───┐
+        │  0 │  1 │  2 │  3 │  4 │  5 │...│  ← 47 tiles, 紧密排列
+        └────┴────┴────┴────┴────┴────┴───┘
         """
 
     def build_with_metadata(self) -> tuple[Image, dict]:
         """
-        拼接并返回元数据:
+        返回 (图集图片, 元数据):
         {
-            "tile_count": 8,
-            "columns": 4,
-            "rows": 2,
-            "tile_size": 512,
-            "image_size": [2048, 1024],
-            "format": "png"
+            "tile_count": 47,
+            "tile_size": 32,
+            "columns": X,
+            "rows": Y,
+            "image_size": [W, H],
+            "format": "png",
+            "mask_map": {0x00: 0, 0x01: 1, ...}  # bitmask → tileset index
         }
         """
 
-    def save(self, filepath: str, format: str = "PNG"):
-        """保存拼接结果到文件"""
+    def save(self, filepath: str):
+        """保存最终 autotile 图集"""
 ```
 
-**Tileset 布局示意**：
+#### 5.3.4 完整处理管线
 
 ```
-       tile_size
-    ├──────────┤
-  ┌─────────────────────────────────────┐
-  │ tile[0] │ tile[1] │ tile[2] │ ...   │  ← Row 0
-  ├─────────┼─────────┼─────────┼───────┤
-  │ tile[4] │ tile[5] │   ...   │ ...   │  ← Row 1
-  ├─────────┼─────────┼─────────┼───────┤
-  │   ...   │   ...   │   ...   │ ...   │  ← Row N
-  └─────────────────────────────────────┘
+SD 生成 512×512 原始纹理
+         │
+         ▼
+┌──────────────────────────┐
+│ 1. ImageProcessor         │
+│    downscale(512→target)  │  缩放到目标像素尺寸 (16/32/64/128)
+└──────────┬───────────────┘
+           │
+     ┌─────┴─────┐
+     ▼           ▼
+  background   surface
+  (背景材质)   (表面材质)
+     │           │
+     │    ┌──────┴──────┐
+     │    │ nine_slice()│  将 surface 切割为 8 个子区域
+     │    │ → 8 parts   │
+     │    └──────┬──────┘
+     │           │
+     ▼           ▼
+┌──────────────────────────┐
+│ 2. AutotileEngine         │
+│    compute_visible_parts()│  对 47 种 bitmask 分别计算可见子区域
+│    compose_tile() ×47     │  合成 47 个 tile 变体
+└──────────┬───────────────┘
+           │
+           ▼
+┌──────────────────────────┐
+│ 3. TilesetBuilder         │
+│    build()                │  按标准布局拼接 47 tiles → 最终 autotile 图集
+└──────────────────────────┘
 ```
 
 ---
@@ -467,35 +674,34 @@ async def startup():
 from pydantic import BaseModel, Field
 
 class GenerateRequest(BaseModel):
-    prompt: str = Field(..., description="正向提示词 (描述要生成的材质)")
+    prompt: str = Field(..., description="正向提示词 (描述要生成的材质, 如'草地')")
     negative_prompt: str | None = Field(None, description="反向提示词")
     seed: int | None = Field(None, description="随机种子 (-1表示随机)")
-    width: int = Field(512, ge=64, le=2048, multiple_of=64)
-    height: int = Field(512, ge=64, le=2048, multiple_of=64)
+    # SD 固定生成 512×512 原始纹理
 
 class GenerateResponse(BaseModel):
-    task_id: str                          # 异步任务 ID
+    task_id: str
     status: str                           # "queued"
-    websocket_url: str                    # 前端连接 WebSocket 获取进度的地址
+    websocket_url: str
 
 # schemas/tileset.py
 class TilesetRequest(BaseModel):
-    image_ids: list[str]                  # 已生成纹理的 ID 列表
-    columns: int = 4
-    tile_size: int = 512
-    padding: int = 0
+    background_image_id: str              # background 纹理 ID
+    surface_image_id: str                 # surface 纹理 ID
+    tile_size: int = 32                   # 目标 tile 尺寸 (16|32|64|128)
 
 class TilesetResponse(BaseModel):
     task_id: str
     status: str
     tileset_url: str | None = None
     metadata: dict | None = None
+    # metadata 包含: tile_count(47), tile_size, columns, rows, image_size, mask_map
 
 # schemas/chat.py
 class ChatMessage(BaseModel):
     role: str                             # "user" | "assistant" | "system"
     content: str
-    image_url: str | None = None          # 图片 URL (assistant 消息中携带)
+    image_url: str | None = None
     timestamp: str
 ```
 
@@ -508,21 +714,26 @@ async def generate_texture(request: GenerateRequest):
     """
     按钮1: 生成材质
 
-    1. 接收用户提示词
+    1. 接收用户提示词 (描述一种材质, 如 "草地"、"沙地")
     2. 用 WorkflowEditor 注入参数到工作流
-    3. 提交到 ComfyUI
-    4. 返回 task_id，前端通过 WebSocket 获取进度
+    3. 提交到 ComfyUI, SD 生成 512×512 原始纹理
+    4. 返回 task_id, 前端通过 WebSocket 获取进度
+    5. 生成完成后, 返回的图片即为该材质的 surface/background 纹理
     """
 
 # routers/tileset.py
 @router.post("/tileset", response_model=TilesetResponse)
 async def build_tileset(request: TilesetRequest):
     """
-    按钮2: 生成 Tileset
+    按钮2: 生成 Autotile Tileset
 
-    1. 接收用户选择的图片 ID 列表
-    2. 用 TilesetBuilder 拼合为图集
-    3. 返回 tileset 图片 URL 和元数据
+    处理管线:
+    1. 根据 ID 加载 background 和 surface 纹理
+    2. ImageProcessor.downscale() → 缩放到 target_size
+    3. ImageProcessor.nine_slice(surface) → 切割为 8 个子区域
+    4. AutotileEngine.generate_all() → 合成 47 个 tile 变体
+    5. TilesetBuilder.build() → 拼接为完整 autotile 图集
+    6. 返回 tileset URL + 元数据 (含 mask_map)
     """
 
 # routers/chat.py
@@ -542,13 +753,13 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
 
     推送消息格式:
     {
-        "type": "progress",        # 消息类型
+        "type": "progress",
         "task_id": "...",
-        "status": "generating",    # queued | generating | completed | failed
-        "progress": 45,            # 百分比 (估算)
-        "message": "Sampling...",
-        "image_url": null,         # 完成后携带图片 URL
-        "error": null              # 失败时携带错误信息
+        "status": "generating",    // queued | generating | composing | completed | failed
+        "progress": 45,            // 0-100
+        "message": "Composing tile 23/47...",
+        "image_url": null,
+        "error": null
     }
     """
 ```
@@ -588,69 +799,93 @@ queued ──► generating ──► completed
 #### 页面布局 (`src/static/index.html`)
 
 ```
-┌───────────────────────────────────────────────────────┐
-│  🎨 Tileset Generator                    [设置 ⚙️]    │
-├───────────────────────────────────────────────────────┤
-│                                                       │
-│  ┌─────────────────────────────────────────────┐     │
-│  │                                             │     │
-│  │            💬 对话消息区域                    │     │
-│  │  ┌──────────────────────────────────┐      │     │
-│  │  │ 👤 用户: 生成一个草地纹理的tile    │      │     │
-│  │  └──────────────────────────────────┘      │     │
-│  │  ┌──────────────────────────────────┐      │     │
-│  │  │ 🤖 助手: 正在生成... ⏳           │      │     │
-│  │  │        [进度条 ████████░░ 80%]    │      │     │
-│  │  │        ┌────────┐                │      │     │
-│  │  │        │  [图片] │ ← 生成结果      │      │     │
-│  │  │        └────────┘                │      │     │
-│  │  │        ✅ tile_"草地" 已生成!     │      │     │
-│  │  └──────────────────────────────────┘      │     │
-│  │                                             │     │
-│  └─────────────────────────────────────────────┘     │
-│                                                       │
-│  ┌─────────────────────────────────────────────┐     │
-│  │  输入提示词...                     │  📎     │     │
-│  │                                     │         │     │
-│  │  [🎨 生成材质]   [🧩 生成Tileset]    │  发送   │     │
-│  └─────────────────────────────────────────────┘     │
-│                                                       │
-└───────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│  🎨 Tileset Generator                                  [设置 ⚙️]    │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  ┌────────────────────────────────────────────────────────────┐     │
+│  │                                                            │     │
+│  │            💬 对话消息区域                                   │     │
+│  │  ┌─────────────────────────────────────────────────┐      │     │
+│  │  │ 👤 用户: 生成草地材质                             │      │     │
+│  │  └─────────────────────────────────────────────────┘      │     │
+│  │  ┌─────────────────────────────────────────────────┐      │     │
+│  │  │ 🤖 助手: SD 正在生成中... ⏳                      │      │     │
+│  │  │        [进度条 ████████░░ 80%]                   │      │     │
+│  │  │        ┌────────────┐                           │      │     │
+│  │  │        │ [512×512] │ ← 原始纹理                 │      │     │
+│  │  │        └────────────┘                           │      │     │
+│  │  │        类型: surface / background               │      │     │
+│  │  │        ✅ 材质"草地"已生成!                      │      │     │
+│  │  └─────────────────────────────────────────────────┘      │     │
+│  │                                                            │     │
+│  │  ┌─────────────────────────────────────────────────┐      │     │
+│  │  │ 🤖 助手: 🧩 Autotile 合成完成!                   │      │     │
+│  │  │        ┌────────────────────────────┐           │      │     │
+│  │  │        │  [47-tile Autotile 图集]    │           │      │     │
+│  │  │        │  32×32 px, 47 tiles        │           │      │     │
+│  │  │        │  [📥 下载]                  │           │      │     │
+│  │  │        └────────────────────────────┘           │      │     │
+│  │  └─────────────────────────────────────────────────┘      │     │
+│  │                                                            │     │
+│  └────────────────────────────────────────────────────────────┘     │
+│                                                                      │
+│  ┌────────────────────────────────────────────────────────────┐     │
+│  │  ┌─────────────────────────────────────────┐               │     │
+│  │  │ 已生成材质: [草地] [沙地] [水面] [岩石]   │ ← 点击选择    │     │
+│  │  │ ↕ 选择 BG 和 Surface                     │               │     │
+│  │  └─────────────────────────────────────────┘               │     │
+│  │                                                             │     │
+│  │  输入提示词...                                  │  📎      │     │
+│  │                                                 │          │     │
+│  │  Tile尺寸: [32px ▼]  [🎨 生成材质]  [🧩 生成 Autotile]    │     │
+│  └────────────────────────────────────────────────────────────┘     │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 #### 按钮行为
 
 | 按钮 | 触发条件 | 行为 |
 |------|---------|------|
-| **🎨 生成材质** | 输入框有文本 | 调用 `POST /api/generate`，通过 WebSocket 跟踪进度，完成后显示图片 |
-| **🧩 生成Tileset** | 用户已选中 ≥2 张已生成的纹理 | 调用 `POST /api/tileset`，拼合图集并展示下载链接 |
+| **🎨 生成材质** | 输入框有文本 | 调用 `POST /api/generate`，SD 固定生成 512×512 纹理，通过 WebSocket 跟踪进度，完成后在对话区显示原始大图。每次生成产生一张纹理（可作为 background 或 surface）。 |
+| **🧩 生成 Autotile** | 用户已选择 **1 张 background** + **1 张 surface** 纹理 | 完整处理管线：<br>1. 将两张纹理缩放到 Tile 尺寸（16/32/64/128）<br>2. `nine_slice(surface)` → 切割为 8 个子区域<br>3. `AutotileEngine` → 合成 47 个 tile 变体<br>4. `TilesetBuilder` → 拼接为 autotile 图集<br>5. 展示图集 + mask_map + 下载链接 |
 
 #### 交互流程
 
 ```
-1. 用户在输入框输入 "一个石头地面的tile纹理，16-bit像素风格"
-2. 用户点击 [🎨 生成材质]
-3. 前端: 输入框清空，对话区显示用户消息 + "正在生成..." 的助手消息
-4. 前端: POST /api/generate → 获取 task_id → 连接 ws://host/ws/{task_id}
-5. WebSocket 逐步推送进度: queued → generating (step 5/20...) → completed
-6. 前端: 替换 "正在生成..." 为生成的图片预览
-7. 用户重复 1-6，生成更多 tile (草地、水面、沙地...)
-8. 用户在对话区勾选已生成的 tile 图片 (如选中4张)
-9. 用户点击 [🧩 生成Tileset]
-10. 前端: POST /api/tileset → 获取拼合后的 tileset 图集 → 显示并提供下载
+1. 用户输入 "草地" → 点击 [🎨 生成材质]
+2. SD 生成 512×512 草地纹理 → 命名为"草地"→ 保存到已生成材质列表
+3. 用户输入 "泥土" → 点击 [🎨 生成材质]
+4. SD 生成 512×512 泥土纹理 → 命名为"泥土"→ 保存到已生成材质列表
+5. 用户在已生成材质中分别点击选择:
+     Background: [泥土]  ← 背景材质
+     Surface:   [草地]  ← 表面材质 (草地包裹在泥土周围)
+6. 用户在 Tile 尺寸下拉框选择 32px
+7. 用户点击 [🧩 生成 Autotile]
+8. 前端: POST /api/tileset (background_image_id + surface_image_id + tile_size=32)
+9. 后端处理:
+   a. 加载两张 512px 纹理
+   b. downscale → 32px
+   c. nine_slice(surface) → 8 个子区域
+   d. AutotileEngine → 对 47 种 bitmask 逐个合成 tile
+   e. TilesetBuilder → 拼接为完整 autotile 图集
+10. 前端: 显示 47-tile Autotile 图集 + mask_map 表 + 下载链接
 ```
 
-#### 已生成图片管理
+#### 已生成材质管理
 
-前端维护一个 **已生成图片列表**（展示在侧边栏或对话区顶部），每张图片有复选框。用户勾选需要拼合的 tile 后点击 "生成Tileset"。
+前端维护 **已生成材质列表**，每张纹理标注类型。用户需要选择 **1 张 background** 和 **1 张 surface** 后，才能点击"生成 Autotile"。
 
 ```
-已生成的 Tile (点击勾选以拼合):
-┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐
-│ ☑️   │ │ ☑️   │ │ ☑️   │ │ ☐   │
-│ 草地 │ │ 沙地 │ │ 水面 │ │ 岩石 │
-└─────┘ └─────┘ └─────┘ └─────┘
+已生成材质 (单击选为 Background, 双击选为 Surface):
+┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
+│ 🌿 草地   │ │ 🟫 泥土   │ │ 🏖️ 沙地   │ │ 🪨 岩石   │
+│ [Surface]│ │  [BG]    │ │          │ │          │
+└──────────┘ └──────────┘ └──────────┘ └──────────┘
 ```
+
+> 注: 同一张纹理既可以作为 background 也可以作为 surface。例如"草地"作为 surface 包裹在"泥土" background 周围，形成泥土上长草的自然过渡效果。
 
 ---
 
@@ -660,10 +895,10 @@ queued ──► generating ──► completed
 
 | 方法 | 路径 | 描述 | 请求体 | 响应体 |
 |------|------|------|--------|--------|
-| `POST` | `/api/generate` | 提交材质生成任务 | `GenerateRequest` | `GenerateResponse` |
-| `GET` | `/api/generate/{task_id}` | 查询任务状态 | - | `TaskStatus` |
-| `POST` | `/api/tileset` | 提交 tileset 拼合任务 | `TilesetRequest` | `TilesetResponse` |
-| `GET` | `/api/tileset/{tileset_id}` | 查询拼合状态 | - | `TilesetStatus` |
+| `POST` | `/api/generate` | 提交材质纹理生成任务 | `GenerateRequest` | `GenerateResponse` |
+| `GET` | `/api/generate/{task_id}` | 查询生成任务状态 | - | `TaskStatus` |
+| `POST` | `/api/tileset` | 提交 autotile 合成任务 (bg+surface → 47 tiles) | `TilesetRequest` | `TilesetResponse` |
+| `GET` | `/api/tileset/{tileset_id}` | 查询合成状态 | - | `TilesetStatus` |
 | `GET` | `/api/images` | 列出所有已生成纹理 | - | `list[ImageInfo]` |
 | `GET` | `/api/images/{image_id}` | 获取单张纹理图片 | - | `image/png` |
 | `DELETE` | `/api/images/{image_id}` | 删除纹理图片 | - | `{"ok": true}` |
@@ -678,11 +913,9 @@ queued ──► generating ──► completed
 ```json
 // POST /api/generate
 {
-  "prompt": "2D game asset, single square tile texture, side view of a stone path, gray cobblestones, 16-bit retro game style, flat lighting, sharp pixel edges, white background, masterpiece, high quality",
+  "prompt": "2D game asset, single square tile texture, top-down view of lush green grass with small flowers, 16-bit retro game style, flat lighting, sharp pixel edges, white background, masterpiece, high quality",
   "negative_prompt": "3D render, blurry, gradients, noise, text, watermark",
-  "seed": -1,
-  "width": 512,
-  "height": 512
+  "seed": -1
 }
 
 // Response
@@ -691,31 +924,45 @@ queued ──► generating ──► completed
   "status": "queued",
   "websocket_url": "ws://127.0.0.1:8000/ws/task_abc123"
 }
+
+// WebSocket complete message:
+{
+  "type": "status",
+  "task_id": "task_abc123",
+  "status": "completed",
+  "image_id": "img_grass_001",
+  "image_url": "/api/images/img_grass_001",
+  "message": "材质"草地"生成完成 (512×512)"
+}
 ```
 
-#### 拼合 Tileset
+#### 合成 Autotile Tileset
 
 ```json
 // POST /api/tileset
 {
-  "image_ids": ["img_001", "img_002", "img_003", "img_004"],
-  "columns": 4,
-  "tile_size": 512,
-  "padding": 0
+  "background_image_id": "img_dirt_001",    // background: 泥土
+  "surface_image_id": "img_grass_001",      // surface: 草地 (包裹在泥土周围)
+  "tile_size": 32
 }
 
 // Response
 {
-  "task_id": "ts_def456",
+  "task_id": "ts_autotile_001",
   "status": "completed",
-  "tileset_url": "/api/tilesets/ts_def456/download",
+  "tileset_url": "/api/tilesets/ts_autotile_001/download",
   "metadata": {
-    "tile_count": 4,
-    "columns": 4,
-    "rows": 1,
-    "tile_size": 512,
-    "image_size": [2048, 512],
-    "format": "png"
+    "tile_count": 47,
+    "tile_size": 32,
+    "columns": 8,
+    "rows": 6,
+    "image_size": [256, 192],
+    "format": "png",
+    "background": "img_dirt_001",
+    "surface": "img_grass_001",
+    "mask_map": {
+      "0x00": 0, "0x01": 1, "0x02": 2, "0x03": 3, ...
+    }
   }
 }
 ```
@@ -777,7 +1024,7 @@ queued ──► generating ──► completed
      │                  │                │                  │
 ```
 
-### 7.2 Tileset 拼合完整流程
+### 7.2 Autotile 合成完整流程
 
 ```
 ┌──────────┐     ┌──────────┐     ┌──────────┐
@@ -786,28 +1033,40 @@ queued ──► generating ──► completed
 └────┬─────┘     └─────┬─────┘     └─────┬─────┘
      │                  │                │
      │ 1. POST /tileset │                │
-     │  (image_ids)     │                │
+     │  (bg_id, sf_id,  │                │
+     │   tile_size=32)  │                │
      │─────────────────►│                │
      │                  │                │
-     │                  │ 2. 加载图片      │
+     │                  │ 2. 加载bg+sf    │
+     │                  │    512px纹理    │
      │                  │◄───────────────│
-     │                  │    (按ID读取)   │
      │                  │                │
-     │                  │ 3. TilesetBuilder.build()
-     │                  │    校验尺寸 → 按布局拼接
+     │                  │ 3. downscale() │
+     │                  │  512→32 NEAREST│
      │                  │                │
-     │                  │ 4. 保存 Tileset │
+     │                  │ 4. nine_slice(surface)
+     │                  │   切割为8个子区域│
+     │                  │                │
+     │                  │ 5. AutotileEngine
+     │                  │   ×47: compose_tile()
+     │                  │   (bitmask → tile)
+     │                  │                │
+     │                  │ 6. TilesetBuilder.build()
+     │                  │   拼接47-tile图集 │
+     │                  │                │
+     │                  │ 7. 保存 Tileset │
      │                  │────────────────►│
-     │                  │   到 output/tilesets/
+     │                  │   output/tilesets/
      │                  │                │
-     │ 5. tileset_url + │                │
+     │ 8. tileset_url + │                │
      │    metadata      │                │
+     │    (含 mask_map) │                │
      │◄─────────────────│                │
      │                  │                │
-     │ 6. GET /tilesets/{id}/download    │
+     │ 9. GET /tilesets/{id}/download    │
      │─────────────────►│                │
      │                  │                │
-     │ 7. 图片文件       │                │
+     │ 10. 图片文件      │                │
      │◄─────────────────│                │
      │                  │                │
 ```
@@ -850,14 +1109,25 @@ queued ──► generating ──► completed
 - [ ] 编写 `tests/test_comfy_client.py` — 单元测试 (mock ComfyUI 响应)
 - [ ] 手动集成测试: 用真实 ComfyUI 跑一次完整生成流程
 
-### Phase 3: 图像处理模块 (第3-4天)
+### Phase 3: 图像处理与 Autotile 引擎 (第3-5天)
 
 - [ ] 实现 `src/services/image_processor.py`
-  - resize / trim / add_border / ensure_rgba / validate_tile
+  - `downscale()` — 512px → 目标尺寸 (16/32/64/128)，使用 NEAREST 插值
+  - `nine_slice()` — 将 surface 纹理按 3×3 九宫格切割为 8 个子区域
+  - resize / ensure_rgba / validate_tile
+- [ ] 实现 `src/services/autotile_engine.py` — **核心模块**
+  - 定义 47 种有效 bitmask 配置
+  - `compute_visible_parts(mask)` — 根据 4-bit 邻接计算应显示的子区域集合
+  - `compose_tile(mask)` — 合成单个 tile: background + 对应 surface 子区域
+  - `generate_all()` — 遍历全部 47 种 mask，返回完整 tile 列表
 - [ ] 实现 `src/services/tileset_builder.py`
-  - add_tile / build / build_with_metadata / save
-- [ ] 编写 `tests/test_tileset_builder.py` — 使用纯色测试图片验证拼接逻辑
-- [ ] 确认 tileset 布局算法正确（行优先，自动换行）
+  - `add_tile` / `build` / `build_with_metadata` / `save`
+  - 按标准 47-tile 布局拼接，紧密排列，无缝隙
+  - `build_with_metadata()` 返回 `mask_map`（bitmask → tileset 索引）
+- [ ] 编写测试:
+  - `tests/test_image_processor.py` — 验证 nine_slice 切割正确性
+  - `tests/test_autotile_engine.py` — 使用纯色 mock 图片验证 47 个 tile 的 bitmask 逻辑
+  - `tests/test_tileset_builder.py` — 验证拼接布局和元数据正确性
 
 ### Phase 4: API 路由与 WebSocket (第4-6天)
 
@@ -875,7 +1145,7 @@ queued ──► generating ──► completed
   - 对话历史管理 (内存存储，session 级别)
 - [ ] 实现 `GET /api/images` 系列 (图片管理 CRUD)
 
-### Phase 5: 前端界面 (第6-8天)
+### Phase 5: 前端界面 (第7-9天)
 
 - [ ] 编写 `src/static/index.html` — 页面骨架
 - [ ] 编写 `src/static/css/style.css` — 样式
@@ -886,20 +1156,23 @@ queued ──► generating ──► completed
   - 消息渲染，图片懒加载，生成进度条更新
 - [ ] 编写 `src/static/js/ui.js` — UI 交互
   - 两个按钮的事件绑定
-  - 已生成图片的选择/勾选管理
-  - 拖拽排序（可选）
-- [ ] 端到端测试: 前端 → API → ComfyUI → 图片展示
+  - 已生成材质列表管理（单击选为 Background，再次单击选为 Surface）
+  - Tile 尺寸选择器 (16/32/64/128)
+  - Autotile 图集预览与 mask_map 展示
+- [ ] 端到端测试: 前端 → API → ComfyUI → Autotile → 图片展示
 
-### Phase 6: 完善与测试 (第8-10天)
+### Phase 6: 完善与测试 (第9-11天)
 
 - [ ] 错误处理完善
-  - ComfyUI 连接失败
-  - 生成超时
-  - 图片尺寸不匹配
-  - 前端网络断开
+  - ComfyUI 连接失败 / 生成超时
+  - nine_slice 切割尺寸校验
+  - 图片尺寸不匹配 (bg 与 surface 尺寸不一致)
+  - bitmask 配置完整性校验（必须恰好 47 种）
+  - 前端网络断开重连
 - [ ] 添加日志系统 (Python `logging` 模块)
-- [ ] 编写集成测试
-- [ ] 编写 `README.md` 使用说明
+- [ ] 编写集成测试:
+  - `test_full_pipeline.py` — 端到端: 从两张 mock 纹理到最终 autotile 图集
+- [ ] 编写 `README.md` 使用说明（含 autotile 格式说明）
 - [ ] 项目打包与部署文档
 
 ---
@@ -912,7 +1185,9 @@ queued ──► generating ──► completed
 | SD 生成时间长 (>30s) | 用户体验差 | WebSocket 实时推送进度 + 进度条动画缓解等待感 |
 | GPU 资源不足 | 生成排队或 OOM | 在配置中控制 batch_size 和分辨率上限 |
 | 像素风格 LoRA 不稳定 | 部分生成结果不可用 | 前端允许用户删除不满意的结果，重新生成 |
-| 大尺寸 tileset 内存占用 | 服务端 OOM | 限制单次拼合 tile 数量上限 (如 max 64 个) |
+| background 与 surface 风格不匹配 | 合成效果差 | 前端预览合成结果，支持重新选择材质组合 |
+| Surface 纹理 nine_slice 切割不精确 | 边缘过渡生硬 | 在 ImageProcessor 中增加边缘检测辅助定位切割线 |
+| bitmask 逻辑实现错误 | tile 邻接过渡不正确 | 为 AutotileEngine 编写充分的单元测试，覆盖全部 47 种 mask |
 | 前端同时打开多个 WebSocket | 连接数压力 | 实现心跳检测，超时自动关闭闲置连接 |
 
 ---
@@ -928,8 +1203,9 @@ queued ──► generating ──► completed
 ## 附录 B: 未来扩展方向
 
 1. **多工作流支持**: 除材质生成外，增加法线贴图、高度图生成工作流
-2. **自动补全/变异**: 基于已有 tile，用 img2img 自动生成相邻 tile 变体
-3. **无缝拼接**: 使用 border-reflection 技术让相邻 tile 边缘无缝过渡
-4. **多格式导出**: 支持 Unity Sprite Atlas、Godot TileSet、Tiled TMX 等格式
-5. **批量生成队列**: 支持一次性提交多个提示词，排队生成
-6. **历史记录持久化**: 使用 SQLite 替换内存存储，支持跨会话查看历史
+2. **批量材质对生成**: 用户一次选择多组 (bg, surface) 对，批量合成多个 autotile 图集
+3. **47-tile 布局预览**: 前端提供交互式 mask 预览，鼠标悬停查看每个 tile 对应的 bitmask 配置
+4. **多格式导出**: 支持 Unity Sprite Atlas、Godot TileSet、Tiled TMX、RPG Maker 等游戏引擎格式
+5. **自动生成 background 变体**: 基于 surface，用 img2img 反向推导合适的 background 纹理
+6. **历史记录持久化**: 使用 SQLite 替换内存存储，支持跨会话查看生成历史
+7. **ComfyUI 工作流模板库**: 支持切换不同的工作流模板以适配不同的美术风格（像素风/手绘风/写实风）
