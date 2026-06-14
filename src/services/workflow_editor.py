@@ -21,8 +21,8 @@ class WorkflowEditor:
     ┌─────────┬─────────────────────────┬──────────────────────────────────┐
     │ 节点 ID  │ 类型                    │ 可修改参数                        │
     ├─────────┼─────────────────────────┼──────────────────────────────────┤
-    │ 2       │ CLIPTextEncodeLumina2   │ text (正向提示词)                 │
-    │ 5       │ CLIPTextEncodeLumina2   │ text (反向提示词)                 │
+    │ 2       │ CLIPTextEncodeLumina2   │ user_prompt (正向提示词)          │
+    │ 5       │ CLIPTextEncodeLumina2   │ user_prompt (反向提示词)          │
     │ 4       │ KSampler                │ seed, steps, cfg, sampler, scheduler │
     │ 11      │ EmptyLatentImage        │ width, height, batch_size         │
     │ 7       │ SaveImage               │ filename_prefix                   │
@@ -50,16 +50,18 @@ class WorkflowEditor:
         修改提示词
 
         Args:
-            positive: 正向提示词 (注入到节点 2)
-            negative: 反向提示词 (注入到节点 5), 为 None 时使用默认负向提示词
+            positive: 正向提示词 (注入到节点 2 的 user_prompt)
+            negative: 反向提示词 (注入到节点 5 的 user_prompt), 为 None 时使用默认负向提示词
+
+        注意: 模板使用 CLIPTextEncodeLumina2 节点, 其提示词字段为 user_prompt (非 text)
         """
         # 节点 2: 正向提示词
         if "2" in self.template:
-            self.template["2"]["inputs"]["text"] = positive
+            self.template["2"]["inputs"]["user_prompt"] = positive
 
         # 节点 5: 反向提示词
         if negative is not None and "5" in self.template:
-            self.template["5"]["inputs"]["text"] = negative
+            self.template["5"]["inputs"]["user_prompt"] = negative
 
     def set_seed(self, seed: int | None = None):
         """

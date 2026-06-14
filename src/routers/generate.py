@@ -15,6 +15,7 @@ from src.schemas.generate import GenerateRequest, GenerateResponse
 from src.services.workflow_editor import WorkflowEditor
 from src.services.comfy_client import ComfyClient
 from src.config import load_config
+from src.routers.ws import manager
 
 router = APIRouter(prefix="/generate", tags=["generate"])
 
@@ -24,6 +25,9 @@ _task_store: dict[str, dict] = {}
 # 输出目录
 OUTPUT_DIR = Path(__file__).resolve().parent.parent.parent / "output" / "textures"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# 静态文件 URL 前缀 (对应 main.py 中 output 目录的 StaticFiles mount)
+OUTPUT_URL_PREFIX = "/output/textures"
 
 
 def _build_comfy_prompt(user_prompt: str, negative_prompt: str | None, seed: int | None):
@@ -56,7 +60,7 @@ def _build_comfy_prompt(user_prompt: str, negative_prompt: str | None, seed: int
 
 
 async def _run_generation(task_id: str, workflow: dict):
-    """后台异步执行 SD 生成任务, 并更新 _task_store"""
+    """后台异步执行 SD 生成任务, 并更新 _task_store, 通过 WebSocket 推送进度"""
     config = load_config()
     client = ComfyClient(
         base_url=config.comfyui.base_url,
@@ -64,27 +68,44 @@ async def _run_generation(task_id: str, workflow: dict):
     )
 
     try:
+        # ── 通知前端: 开始生成 ──
         _task_store[task_id]["status"] = "generating"
+        await manager.send_progress(
+            task_id=task_id, status="generating", progress=10,
+            message="已提交 ComfyUI 生成任务...",
+        )
 
         images = await client.generate(workflow)
 
-        # 保存生成的图片
-        saved_paths = []
+        # ── 保存生成的图片, 构建前端可用的 URL ──
+        image_urls: list[str] = []
         for i, img_bytes in enumerate(images):
             filename = f"{task_id}_{i}.png"
             filepath = OUTPUT_DIR / filename
             filepath.write_bytes(img_bytes)
-            saved_paths.append(str(filepath))
+            # 存储前端可访问的 URL (非文件系统路径)
+            image_urls.append(f"{OUTPUT_URL_PREFIX}/{filename}")
 
         _task_store[task_id].update({
             "status": "completed",
-            "image_paths": saved_paths,
+            "image_urls": image_urls,
         })
+
+        # ── 通知前端: 生成完成 ──
+        await manager.send_progress(
+            task_id=task_id, status="completed", progress=100,
+            message="生成完成!",
+            image_url=image_urls[0] if image_urls else None,
+        )
     except Exception as e:
         _task_store[task_id].update({
             "status": "failed",
             "error": str(e),
         })
+        await manager.send_progress(
+            task_id=task_id, status="failed",
+            error=str(e),
+        )
     finally:
         await client.close()
 
@@ -117,7 +138,7 @@ async def generate_texture(
     # 初始化任务状态
     _task_store[task_id] = {
         "status": "queued",
-        "image_paths": [],
+        "image_urls": [],
         "error": None,
     }
 

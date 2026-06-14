@@ -6,6 +6,7 @@
 # 运行方式:
 #   uvicorn src.main:app --reload --host 127.0.0.1 --port 8000
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -18,10 +19,35 @@ from src.services.comfy_client import ComfyClient
 
 config: AppConfig = load_config()
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """应用生命周期: 启动时验证 ComfyUI 连通性"""
+    # ── 启动逻辑 ──
+    client = ComfyClient(
+        base_url=config.comfyui.base_url,
+        timeout=10,
+    )
+    try:
+        http_client = await client._get_client()
+        _resp = await http_client.get("/prompt")
+        print(f"[startup] ComfyUI 服务检测完成: {config.comfyui.base_url}")
+    except Exception as e:
+        print(
+            f"[startup] ⚠️  警告: 无法连接到 ComfyUI 服务 ({config.comfyui.base_url}): {e}\n"
+            f"         请确保 ComfyUI 已启动并监听在 {config.comfyui.base_url}"
+        )
+    finally:
+        await client.close()
+    # ── yield 交出控制权 ──
+    yield
+    # ── 关闭逻辑 (如有需要可在此添加) ──
+
+
 app = FastAPI(
     title="Tileset Generator API",
     description="基于 Stable Diffusion + ComfyUI 的自动 47-tile Autotile 生成系统",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # ── CORS 中间件 ────────────────────────────────────────────────
@@ -56,33 +82,6 @@ output_dir.mkdir(parents=True, exist_ok=True)
 (output_dir / "textures").mkdir(exist_ok=True)
 (output_dir / "tilesets").mkdir(exist_ok=True)
 app.mount("/output", StaticFiles(directory=str(output_dir)), name="output")
-
-
-# ── 启动事件: 验证 ComfyUI 连通性 ──────────────────────────────
-
-@app.on_event("startup")
-async def startup_check():
-    """
-    启动时检查 ComfyUI 服务是否可达。
-    如果不可达, 打印警告但不阻止服务启动 (允许后续手动修复)。
-    """
-    client = ComfyClient(
-        base_url=config.comfyui.base_url,
-        timeout=10,
-    )
-    try:
-        # 尝试访问 ComfyUI 根路径确认服务存活
-        http_client = await client._get_client()
-        resp = await http_client.get("/prompt")
-        # /prompt GET 通常返回 405 (Method Not Allowed), 但说明服务在运行
-        print(f"[startup] ComfyUI 服务检测完成: {config.comfyui.base_url}")
-    except Exception as e:
-        print(
-            f"[startup] ⚠️  警告: 无法连接到 ComfyUI 服务 ({config.comfyui.base_url}): {e}\n"
-            f"         请确保 ComfyUI 已启动并监听在 {config.comfyui.base_url}"
-        )
-    finally:
-        await client.close()
 
 
 # ── 健康检查端点 ────────────────────────────────────────────────
