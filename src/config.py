@@ -5,16 +5,42 @@
 
 import os
 from pathlib import Path
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from dotenv import load_dotenv
 import yaml
 
 
 class ComfyUIConfig(BaseModel):
-    """ComfyUI 服务连接配置"""
+    """ComfyUI 服务连接配置
+
+    comfy_file_path 为 ComfyUI 根目录，其下需包含 input/、models/、output/ 子目录。
+    input_dir / model_path / output_dir 三个属性自动从 comfy_file_path 派生。
+    """
     base_url: str = "http://127.0.0.1:8188"
     timeout: int = 300
     poll_interval: float = 1.0
+    comfy_file_path: str = ""  # ComfyUI 根目录绝对路径
+
+    @property
+    def input_dir(self) -> str:
+        """ComfyUI input/ 目录 (Surface 生成时需复制背景图到此)"""
+        if self.comfy_file_path:
+            return str(Path(self.comfy_file_path) / "input")
+        return ""
+
+    @property
+    def model_path(self) -> str:
+        """模型根目录, 包含 checkpoints/ 和 loras/ 子目录"""
+        if self.comfy_file_path:
+            return str(Path(self.comfy_file_path) / "models")
+        return ""
+
+    @property
+    def output_dir(self) -> str:
+        """ComfyUI output/ 目录, 存放 ComfyUI 生成的所有图片"""
+        if self.comfy_file_path:
+            return str(Path(self.comfy_file_path) / "output")
+        return ""
 
 
 class GenerationConfig(BaseModel):

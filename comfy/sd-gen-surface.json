@@ -1,0 +1,166 @@
+{
+  "4": {
+    "inputs": {
+      "seed": 958919613742310,
+      "steps": 25,
+      "cfg": 8.2,
+      "sampler_name": "euler_ancestral",
+      "scheduler": "normal",
+      "denoise": 1,
+      "model": [
+        "13",
+        0
+      ],
+      "positive": [
+        "19",
+        0
+      ],
+      "negative": [
+        "20",
+        0
+      ],
+      "latent_image": [
+        "25",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "K采样器"
+    }
+  },
+  "6": {
+    "inputs": {
+      "samples": [
+        "4",
+        0
+      ],
+      "vae": [
+        "10",
+        2
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE解码"
+    }
+  },
+  "7": {
+    "inputs": {
+      "filename_prefix": "tgen-surface",
+      "images": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "保存图像"
+    }
+  },
+  "10": {
+    "inputs": {
+      "ckpt_name": "sd3.5_medium_incl_clips_t5xxlfp8scaled.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "Checkpoint加载器（简易）"
+    }
+  },
+  "13": {
+    "inputs": {
+      "lora_name": "PreAlphaWoWTilesetsSDXL.safetensors",
+      "strength_model": 1,
+      "strength_clip": 1.2,
+      "model": [
+        "10",
+        0
+      ],
+      "clip": [
+        "10",
+        1
+      ]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "加载LoRA"
+    }
+  },
+  "19": {
+    "inputs": {
+      "text": "(flat design:1.3), (2D pixel art:1.2), (no decorations:1.2), pure flat base texture, uniform pattern, featureless, seamless texture, top-down view, simple color, massive pixel, video game asset, no shadow, no lighting gradient, clean shapes, grass material, green texture",
+      "clip": [
+        "13",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "正向提示词"
+    }
+  },
+  "20": {
+    "inputs": {
+      "text": "(white background:1.5), realistic, 3d, render, photorealistic, gradient, smooth, detailed, high resolution, soft lighting, shadow, isometric, blur, noisy, dither, dithering, decorations, repetitive elements, outliers",
+      "clip": [
+        "13",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "反向提示词"
+    }
+  },
+  "21": {
+    "inputs": {
+      "image": "ComfyUI_00090_.png [output]"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "加载图像"
+    }
+  },
+  "22": {
+    "inputs": {
+      "image": "surface-mask.png",
+      "channel": "red"
+    },
+    "class_type": "LoadImageMask",
+    "_meta": {
+      "title": "加载图像（作为遮罩）"
+    }
+  },
+  "24": {
+    "inputs": {
+      "pixels": [
+        "21",
+        0
+      ],
+      "vae": [
+        "10",
+        2
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE编码"
+    }
+  },
+  "25": {
+    "inputs": {
+      "samples": [
+        "24",
+        0
+      ],
+      "mask": [
+        "22",
+        0
+      ]
+    },
+    "class_type": "SetLatentNoiseMask",
+    "_meta": {
+      "title": "设置Latent噪波遮罩"
+    }
+  }
+}

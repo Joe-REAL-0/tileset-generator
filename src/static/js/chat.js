@@ -1,35 +1,64 @@
 // src/static/js/chat.js
 // 对话逻辑
 // 职责: 协调用户输入、API 调用、WebSocket 连接和 UI 更新
-//   - generateMaterial():  处理 "生成材质" 按钮 → POST /api/generate → WS 跟踪进度
-//   - generateTileset():   处理 "生成 Autotile" 按钮 → POST /api/tileset → WS 跟踪进度
-//   - 将服务端 WebSocket 推送的状态更新渲染到对话区
+//   - generateTexture(): 根据当前模式 (background/surface) 提交生成任务
+//   - generateTileset():  提交 Autotile 合成任务 (从图集页面选择)
+//   - WebSocket 进度推送 → 实时更新对话区
 
 const Chat = {
-    // ── 生成材质 (按钮1) ──
+    // ── 通用: 生成纹理 (Background 或 Surface) ──
 
-    async generateMaterial(prompt) {
-        const input = UI.elements.promptInput;
-        const name = prompt.length > 20 ? prompt.substring(0, 20) + '...' : prompt;
-        input.value = '';
-        input.focus();
+    async generateTexture() {
+        const mode = UI.state.generationMode;
+        const materialPrompt = UI.elements.materialPrompt.value.trim();
+        const combinedPrompt = UI.getCombinedPositivePrompt();
+        const negativePrompt = UI.getNegativePrompt();
+        const { checkpoint, lora } = UI.getModelSelection();
+        const bgImageId = (mode === 'surface') ? UI.state.surfaceSelectedBgId : null;
+
+        const emoji = mode === 'background' ? '🎨' : '🖌️';
+        const typeLabel = mode === 'background' ? 'Background' : 'Surface';
+        const shortName = materialPrompt.length > 24
+            ? materialPrompt.substring(0, 24) + '...'
+            : materialPrompt;
+
+        // 清空材质输入
+        UI.elements.materialPrompt.value = '';
 
         // 用户消息
-        UI.addMessage('user', `生成材质: <b>${name}</b>`);
+        let userMsg = `${emoji} 生成 ${typeLabel}: <b>${shortName}</b>`;
+        if (bgImageId) {
+            userMsg += ` (基于背景: ${bgImageId})`;
+        }
+        UI.addMessage('user', userMsg);
 
-        // 助手进度消息
+        // 如果是生成 background，提醒用户等待时间
+        if (mode === 'background') {
+            UI.addMessage('system', '⏳ 提示：由于设备性能不同，Background 纹理生成大约需要 1 到 2 分钟，请耐心等待...');
+        }
+
+        // 进度消息
         const progress = UI.addProgressMessage();
-        UI.updateProgress(progress.msgId, 5, '正在提交任务...');
+        UI.updateProgress(progress.msgId, 5, `正在提交 ${typeLabel} 生成任务...`);
 
         try {
+            const body = {
+                prompt: combinedPrompt,
+                negative_prompt: negativePrompt,
+                seed: -1,
+                generate_type: mode,
+                checkpoint: checkpoint,
+                lora: lora,
+            };
+
+            if (mode === 'surface' && bgImageId) {
+                body.background_image_id = bgImageId;
+            }
+
             const resp = await fetch('/api/generate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    prompt: prompt,
-                    negative_prompt: null,
-                    seed: -1,
-                }),
+                body: JSON.stringify(body),
             });
 
             if (!resp.ok) {
@@ -40,28 +69,24 @@ const Chat = {
             const data = await resp.json();
             const taskId = data.task_id;
 
-            UI.updateProgress(progress.msgId, 10, 'SD 正在生成...');
+            UI.updateProgress(progress.msgId, 10, 'SD 正在生成中...');
 
-            // 通过 WebSocket 跟踪进度
+            // WebSocket 跟踪进度
             wsClient.connect(
                 taskId,
-                // onMessage
                 (msg) => {
                     if (msg.status === 'generating') {
-                        UI.updateProgress(progress.msgId, 30 + Math.floor(msg.progress * 0.5), 'SD 采样中...');
+                        UI.updateProgress(progress.msgId, msg.progress || 0, msg.message || 'SD 采样中...');
                     } else if (msg.status === 'completed') {
-                        UI.updateProgress(progress.msgId, 90, '生成完成!');
-                        // 获取 image_paths 并显示
-                        Chat._fetchAndDisplayImage(taskId, name, progress);
+                        Chat._fetchAndDisplayImage(taskId, shortName, progress, mode);
                     } else if (msg.status === 'failed') {
                         UI.completeProgressMessage(
                             progress.msgId, null,
-                            `❌ 生成失败: ${msg.error || '未知错误'}`
+                            `❌ ${typeLabel} 生成失败: ${msg.error || '未知错误'}`
                         );
                         wsClient.disconnect();
                     }
                 },
-                // onClose
                 () => {}
             );
         } catch (e) {
@@ -72,25 +97,33 @@ const Chat = {
         }
     },
 
-    async _fetchAndDisplayImage(taskId, name, progress) {
+    // ── 获取并显示生成结果 ──
+
+    async _fetchAndDisplayImage(taskId, name, progress, type) {
         try {
             const resp = await fetch(`/api/generate/${taskId}`);
             const data = await resp.json();
 
-            if (data.status === 'completed' && data.image_paths && data.image_paths.length > 0) {
-                // 构建图片 URL (通过 output 静态目录)
-                const relativePath = data.image_paths[0];
-                const filename = relativePath.split('/').pop();
-                const imageUrl = `/output/textures/${filename}`;
+            if (data.status === 'completed' && data.image_urls && data.image_urls.length > 0) {
+                const imageUrl = data.image_urls[0];
+
+                const typeLabel = type === 'background' ? 'Background' : 'Surface';
+                const emoji = type === 'background' ? '🎨' : '🖌️';
 
                 UI.completeProgressMessage(
                     progress.msgId, imageUrl,
-                    `✅ 材质 <b>"${name}"</b> 已生成! (512×512)`,
-                    '<div style="margin-top:6px;font-size:0.8rem;color:var(--text-secondary)">点击侧边栏选择为 Background 或 Surface</div>'
+                    `${emoji} ${typeLabel} <b>"${name}"</b> 已生成! (512×512)`,
+                    '<div style="margin-top:6px;font-size:0.8rem;color:var(--text-secondary)">可在「材质库」和「生成图集」页面中使用此材质</div>'
                 );
 
-                // 添加到已生成材质列表
-                UI.addMaterial(`gen_${taskId.split('_').pop()}`, name, imageUrl);
+                // 记录材质状态
+                UI.addMaterial(taskId, name, imageUrl);
+                UI.setMaterialType(taskId, type);
+
+                // 刷新 Surface 模式的背景图选择器
+                if (type === 'background') {
+                    UI.loadBackgroundMaterials();
+                }
             } else if (data.status === 'failed') {
                 UI.completeProgressMessage(
                     progress.msgId, null,
@@ -107,25 +140,22 @@ const Chat = {
         }
     },
 
-    // ── 生成 Autotile (按钮2) ──
+    // ── 生成 Autotile (从图集页面) ──
 
     async generateTileset() {
-        const bgId = UI.state.selectedBgId;
-        const sfId = UI.state.selectedSfId;
+        const { bgId, sfId } = UI.getAtlasSelection();
         const tileSize = UI.getTileSize();
 
         if (!bgId || !sfId) {
-            UI.addMessage('system', '⚠️ 请先选择 1 张 Background 和 1 张 Surface 材质');
+            UI.addMessage('system', '⚠️ 请先选择 Background 和 Surface 材质');
             return;
         }
 
         const bgName = UI.state.materials.find(m => m.id === bgId)?.name || bgId;
         const sfName = UI.state.materials.find(m => m.id === sfId)?.name || sfId;
 
-        // 用户消息
-        UI.addMessage('user', `生成 Autotile: BG=<b>${bgName}</b> + Surface=<b>${sfName}</b> (${tileSize}px)`);
+        UI.addMessage('user', `🧩 生成 Autotile: BG=<b>${bgName}</b> + Surface=<b>${sfName}</b> (${tileSize}px)`);
 
-        // 进度消息
         const progress = UI.addProgressMessage();
         UI.updateProgress(progress.msgId, 5, '提交 autotile 合成任务...');
 
@@ -148,7 +178,6 @@ const Chat = {
             const data = await resp.json();
             const taskId = data.task_id;
 
-            // WebSocket 跟踪进度
             wsClient.connect(
                 taskId,
                 (msg) => {
@@ -179,7 +208,6 @@ const Chat = {
         const imageUrl = msg.image_url;
         const meta = msg.metadata || {};
 
-        // 元数据 HTML
         const metaHtml = meta.tile_count ? `
             <table class="meta-table">
                 <tr><td>Tile 数量</td><td>${meta.tile_count}</td></tr>
@@ -200,7 +228,6 @@ const Chat = {
                 `
             );
         } else {
-            // 从 tileset URL 获取 (通过 REST)
             UI.completeProgressMessage(
                 progress.msgId,
                 null,

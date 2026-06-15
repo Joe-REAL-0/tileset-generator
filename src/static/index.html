@@ -7,78 +7,191 @@
     <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
-    <!-- ── 顶部标题栏 ── -->
+    <!-- ── 顶部导航栏 ── -->
     <header class="header">
-        <h1>🎨 Tileset Generator</h1>
-        <span class="subtitle">基于 Stable Diffusion 的自动 Autotile 生成系统</span>
-        <button class="settings-btn" title="设置">⚙️</button>
+        <h1 class="header-logo">🎨 Tileset Generator</h1>
+        <nav class="header-nav">
+            <button class="nav-tab active" data-page="generate">生成材质</button>
+            <button class="nav-tab" data-page="library">材质库</button>
+            <button class="nav-tab" data-page="atlas">生成图集</button>
+        </nav>
     </header>
 
     <!-- ── 主体区域 ── -->
     <main class="main-container">
 
-        <!-- 已生成材质侧边栏 -->
-        <aside class="sidebar" id="sidebar">
-            <h3>已生成材质</h3>
-            <div class="material-list" id="materialList">
-                <p class="placeholder-text">尚未生成任何材质</p>
-            </div>
-            <div class="selection-info" id="selectionInfo">
-                <div class="selection-row">
-                    <span class="label-bg">Background:</span>
-                    <span id="selectedBg" class="selected-name">未选择</span>
-                </div>
-                <div class="selection-row">
-                    <span class="label-sf">Surface:</span>
-                    <span id="selectedSf" class="selected-name">未选择</span>
-                </div>
-            </div>
-        </aside>
-
-        <!-- 对话区域 -->
-        <section class="chat-area">
-            <div class="chat-messages" id="chatMessages">
-                <div class="message system">
-                    <div class="message-content">
-                        👋 欢迎使用 Tileset Generator!<br>
-                        输入材质描述并点击 <b>"生成材质"</b> 来创建纹理。<br>
-                        选择 <b>1 张 Background</b> + <b>1 张 Surface</b> 后，
-                        点击 <b>"生成 Autotile"</b> 合成 47-tile 图集。
+        <!-- ── 页面1: 生成材质 ── -->
+        <section class="page-content active" id="page-generate">
+            <!-- 生成结果 / 对话区 -->
+            <div class="chat-area">
+                <div class="chat-messages" id="chatMessages">
+                    <div class="message system">
+                        <div class="message-content">
+                            👋 欢迎使用 Tileset Generator!<br><br>
+                            <b>两种生成模式:</b><br>
+                            🖼️ <b>Background 纹理</b> — 纯文生图，从噪声生成无缝背景纹理<br>
+                            🗻 <b>Surface 纹理</b> — 图生图+遮罩修补，基于背景图生成表面纹理<br><br>
+                            <b>提示词结构:</b><br>
+                            系统提示词 (控制风格) + 材质提示词 (描述内容) → 自动整合发送
+                        </div>
                     </div>
                 </div>
             </div>
-        </section>
-    </main>
 
-    <!-- ── 底部输入栏 ── -->
-    <footer class="input-bar">
-        <div class="input-row">
-            <input
-                type="text"
-                id="promptInput"
-                class="prompt-input"
-                placeholder="输入提示词描述材质 (如: 草地, 沙地, 水面...)"
-                autocomplete="off"
-            >
-        </div>
-        <div class="button-row">
-            <div class="tile-size-selector">
-                <label for="tileSize">Tile 尺寸:</label>
-                <select id="tileSize">
-                    <option value="16">16px</option>
-                    <option value="32" selected>32px</option>
-                    <option value="64">64px</option>
-                    <option value="128">128px</option>
-                </select>
+            <div class="generate-panel">
+
+                <!-- 生成模式切换 -->
+                <div class="mode-tabs">
+                    <button class="mode-tab active" data-mode="background">
+                        🖼️ 生成 Background 纹理
+                    </button>
+                    <button class="mode-tab" data-mode="surface">
+                        🗻 生成 Surface 纹理
+                    </button>
+                </div>
+
+                <!-- 正向系统提示词 -->
+                <div class="input-group">
+                    <label for="systemPositivePrompt">
+                        正向系统提示词
+                        <span class="label-hint">💡 建议不要修改，系统已为你配置最佳参数</span>
+                    </label>
+                    <textarea
+                        id="systemPositivePrompt"
+                        class="prompt-textarea"
+                        rows="3"
+                        placeholder="加载中..."
+                    ></textarea>
+                </div>
+
+                <!-- 反向系统提示词 -->
+                <div class="input-group">
+                    <label for="systemNegativePrompt">
+                        反向系统提示词
+                        <span class="label-hint">💡 建议不要修改，系统已为你配置最佳参数</span>
+                    </label>
+                    <textarea
+                        id="systemNegativePrompt"
+                        class="prompt-textarea"
+                        rows="3"
+                        placeholder="加载中..."
+                    ></textarea>
+                </div>
+
+                <!-- 材质提示词 -->
+                <div class="input-group">
+                    <label for="materialPrompt">
+                        材质提示词
+                        <span class="label-hint">输入材质的种类、颜色等信息 (3-4 个词)</span>
+                    </label>
+                    <input
+                        type="text"
+                        id="materialPrompt"
+                        class="material-input"
+                        placeholder="例如: dirt, brown, earthy"
+                        autocomplete="off"
+                    >
+                </div>
+
+                <!-- 模型选择 -->
+                <div class="input-group">
+                    <label>模型选择</label>
+                    <div class="model-selectors">
+                        <div class="model-field">
+                            <label for="checkpointSelect">Checkpoint</label>
+                            <select id="checkpointSelect" class="model-select">
+                                <option value="">-- 使用默认 --</option>
+                            </select>
+                        </div>
+                        <div class="model-field">
+                            <label for="loraSelect">LoRA</label>
+                            <select id="loraSelect" class="model-select">
+                                <option value="">-- 使用默认 --</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Surface 模式: 背景图选择器 -->
+                <div class="input-group" id="bgSelectorGroup" style="display:none;">
+                    <label>选择背景图 (Surface 生成需要)</label>
+                    <div class="bg-selector-grid" id="bgSelectorGrid">
+                        <p class="placeholder-text" id="bgSelectorPlaceholder">
+                            请先在「生成材质」中生成一些 Background 纹理
+                        </p>
+                    </div>
+                </div>
+
+                <!-- 生成按钮 -->
+                <div class="generate-action-row">
+                    <button id="btnGenerate" class="btn btn-primary btn-large">
+                        🎨 开始生成
+                    </button>
+                </div>
             </div>
-            <button id="btnGenerate" class="btn btn-primary">
-                🎨 生成材质
-            </button>
-            <button id="btnTileset" class="btn btn-success" disabled>
-                🧩 生成 Autotile
-            </button>
-        </div>
-    </footer>
+        </section>
+
+        <!-- ── 页面2: 材质库 ── -->
+        <section class="page-content" id="page-library">
+            <div class="library-panel">
+                <div class="library-header">
+                    <h2>📚 材质库</h2>
+                    <span class="library-subtitle">浏览本项目生成的 Background 和 Surface 纹理</span>
+                    <button id="btnRefreshLibrary" class="btn btn-primary btn-sm">🔄 刷新</button>
+                    <button id="btnUploadBg" class="btn btn-accent btn-sm">📤 上传 Background</button>
+                    <button id="btnUploadSf" class="btn btn-accent btn-sm">📤 上传 Surface</button>
+                    <input type="file" id="uploadBgInput" accept="image/png,image/jpeg,image/webp,image/bmp" multiple style="display:none;">
+                    <input type="file" id="uploadSfInput" accept="image/png,image/jpeg,image/webp,image/bmp" multiple style="display:none;">
+                </div>
+                <div class="library-grid" id="libraryGrid">
+                    <p class="placeholder-text">加载中...</p>
+                </div>
+                <div class="library-info" id="libraryInfo"></div>
+            </div>
+        </section>
+
+        <!-- ── 页面3: 生成图集 ── -->
+        <section class="page-content" id="page-atlas">
+            <div class="atlas-panel">
+                <div class="atlas-header">
+                    <h2>🧩 生成图集</h2>
+                    <p>选择 Background + Surface 组合生成 47-tile Autotile 图集</p>
+                </div>
+
+                <div class="atlas-selection">
+                    <div class="atlas-field">
+                        <label for="atlasBgSelect">Background 纹理</label>
+                        <select id="atlasBgSelect" class="model-select">
+                            <option value="">-- 请选择 Background --</option>
+                        </select>
+                    </div>
+                    <div class="atlas-field">
+                        <label for="atlasSfSelect">Surface 纹理</label>
+                        <select id="atlasSfSelect" class="model-select">
+                            <option value="">-- 请选择 Surface --</option>
+                        </select>
+                    </div>
+                    <div class="atlas-field">
+                        <label for="tileSize">Tile 尺寸</label>
+                        <select id="tileSize">
+                            <option value="16">16px</option>
+                            <option value="32" selected>32px</option>
+                            <option value="64">64px</option>
+                            <option value="128">128px</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="atlas-action">
+                    <button id="btnTileset" class="btn btn-success btn-large" disabled>
+                        🧩 生成 Autotile
+                    </button>
+                    <p class="hint-text" id="atlasHint">请在上方选择 1 张 Background 和 1 张 Surface 材质</p>
+                </div>
+            </div>
+        </section>
+
+    </main>
 
     <!-- ── Scripts ── -->
     <script src="/js/ws.js"></script>

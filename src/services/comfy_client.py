@@ -9,7 +9,10 @@
 
 import asyncio
 import httpx
-from typing import Any
+import json
+import uuid
+import websockets
+from typing import Any, Callable
 
 
 class ComfyClient:
@@ -112,6 +115,59 @@ class ComfyClient:
             生成图片的二进制数据列表
         """
         prompt_id = await self.queue_prompt(workflow)
+        history = await self.wait_for_completion(prompt_id)
+
+        images: list[bytes] = []
+        for node_id, node_output in history.get("outputs", {}).items():
+            for img_info in node_output.get("images", []):
+                img_bytes = await self.get_image(
+                    filename=img_info["filename"],
+                    subfolder=img_info.get("subfolder", ""),
+                    folder_type=img_info.get("type", "output"),
+                )
+                images.append(img_bytes)
+
+        return images
+
+    async def generate_with_progress(self, workflow: dict[str, Any], progress_callback: Callable = None) -> list[bytes]:
+        """
+        带实时进度推送的生成接口
+        """
+        client_id = uuid.uuid4().hex
+        client = await self._get_client()
+        resp = await client.post("/prompt", json={"prompt": workflow, "client_id": client_id})
+        resp.raise_for_status()
+        prompt_id = resp.json()["prompt_id"]
+
+        ws_url = self.base_url.replace("http://", "ws://").replace("https://", "wss://")
+        ws_url = f"{ws_url}/ws?clientId={client_id}"
+
+        try:
+            async with websockets.connect(ws_url) as websocket:
+                while True:
+                    out = await websocket.recv()
+                    if isinstance(out, str):
+                        message = json.loads(out)
+                        if message["type"] == "progress":
+                            data = message["data"]
+                            if data.get("prompt_id") == prompt_id and progress_callback:
+                                value = data.get("value", 0)
+                                maximum = data.get("max", 1)
+                                if maximum > 0:
+                                    pct = int((value / maximum) * 100)
+                                    await progress_callback(pct)
+                        elif message["type"] == "executed":
+                            data = message["data"]
+                            if data.get("prompt_id") == prompt_id:
+                                break
+                        elif message["type"] == "execution_cached":
+                            data = message["data"]
+                            if data.get("prompt_id") == prompt_id:
+                                break
+        except Exception as e:
+            print(f"WebSocket 进度监听出错: {e}")
+
+        # 获取历史记录并下载图片
         history = await self.wait_for_completion(prompt_id)
 
         images: list[bytes] = []

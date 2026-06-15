@@ -69,12 +69,6 @@ app.include_router(tileset.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")
 app.include_router(ws.router)
 
-# ── 挂载静态文件 (前端) ────────────────────────────────────────
-
-static_dir = Path(__file__).resolve().parent / "static"
-if static_dir.exists():
-    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
-
 # ── 输出目录文件服务 ────────────────────────────────────────────
 
 output_dir = Path(__file__).resolve().parent.parent / "output"
@@ -82,6 +76,25 @@ output_dir.mkdir(parents=True, exist_ok=True)
 (output_dir / "textures").mkdir(exist_ok=True)
 (output_dir / "tilesets").mkdir(exist_ok=True)
 app.mount("/output", StaticFiles(directory=str(output_dir)), name="output")
+
+# ── ComfyUI 输出目录文件服务 (供材质库浏览) ──────────────────────
+# ⚠️ 必须在 "/" 挂载之前注册，否则会被 catch-all 拦截
+
+comfy_output_dir = config.comfyui.output_dir
+if comfy_output_dir and Path(comfy_output_dir).exists():
+    app.mount(
+        "/comfy-output",
+        StaticFiles(directory=comfy_output_dir),
+        name="comfy-output",
+    )
+    print(f"[startup] ComfyUI 输出目录已挂载: {comfy_output_dir} → /comfy-output")
+
+# ── 挂载静态文件 (前端) ────────────────────────────────────────
+# ⚠️ "/" 挂载必须放在最后，因为它会拦截所有未匹配的路径
+
+static_dir = Path(__file__).resolve().parent / "static"
+if static_dir.exists():
+    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
 
 
 # ── 健康检查端点 ────────────────────────────────────────────────

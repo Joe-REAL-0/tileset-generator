@@ -1,176 +1,498 @@
 // src/static/js/ui.js
 // UI 交互逻辑
 // 职责: 管理前端 UI 状态与用户交互
-//   - 已生成材质列表的渲染与选择 (单击选 Background, 双击选 Surface)
-//   - 两个按钮事件绑定与启用/禁用逻辑
-//   - 对话消息的 DOM 操作 (添加消息、更新进度条、渲染图片)
-//   - Tile 尺寸选择器
+//   - 页面Tab切换 (生成材质 / 材质库 / 生成图集)
+//   - 生成模式切换 (Background / Surface)
+//   - 系统提示词 / 模型列表加载
+//   - Surface 模式背景图选择器
+//   - 材质库图片浏览与上传
+//   - 图集页面 BG/SF 选择与按钮状态
+//   - 对话消息渲染 (消息、进度条、图片)
 
 const UI = {
     // ── DOM 引用 ──
     elements: {
-        promptInput: document.getElementById('promptInput'),
+        // 导航
+        navTabs: document.querySelectorAll('.nav-tab'),
+        pages: document.querySelectorAll('.page-content'),
+
+        // 生成页面
+        modeTabs: document.querySelectorAll('.mode-tab'),
+        systemPositivePrompt: document.getElementById('systemPositivePrompt'),
+        systemNegativePrompt: document.getElementById('systemNegativePrompt'),
+        materialPrompt: document.getElementById('materialPrompt'),
+        checkpointSelect: document.getElementById('checkpointSelect'),
+        loraSelect: document.getElementById('loraSelect'),
+        bgSelectorGroup: document.getElementById('bgSelectorGroup'),
+        bgSelectorGrid: document.getElementById('bgSelectorGrid'),
         btnGenerate: document.getElementById('btnGenerate'),
-        btnTileset: document.getElementById('btnTileset'),
+
+        // 材质库页面
+        btnRefreshLibrary: document.getElementById('btnRefreshLibrary'),
+        btnUploadBg: document.getElementById('btnUploadBg'),
+        btnUploadSf: document.getElementById('btnUploadSf'),
+        uploadBgInput: document.getElementById('uploadBgInput'),
+        uploadSfInput: document.getElementById('uploadSfInput'),
+        libraryGrid: document.getElementById('libraryGrid'),
+        libraryInfo: document.getElementById('libraryInfo'),
+
+        // 图集页面
+        atlasBgSelect: document.getElementById('atlasBgSelect'),
+        atlasSfSelect: document.getElementById('atlasSfSelect'),
         tileSize: document.getElementById('tileSize'),
+        btnTileset: document.getElementById('btnTileset'),
+        atlasHint: document.getElementById('atlasHint'),
+
+        // 对话区
         chatMessages: document.getElementById('chatMessages'),
-        materialList: document.getElementById('materialList'),
-        selectedBg: document.getElementById('selectedBg'),
-        selectedSf: document.getElementById('selectedSf'),
     },
 
     // ── 状态 ──
     state: {
         /** @type {Array<{id: string, name: string, url: string}>} */
         materials: [],
-        /** @type {string|null} */
-        selectedBgId: null,
-        /** @type {string|null} */
-        selectedSfId: null,
-        /** @type {string|null} */
-        activeTaskId: null,
+        /** @type {Object<string, 'background'|'surface'>} 材质类型追踪 */
+        materialTypes: {},
+        /** @type {'background'|'surface'} 当前生成模式 */
+        generationMode: 'background',
+        /** @type {string|null} Surface 模式选中的背景图 ID */
+        surfaceSelectedBgId: null,
+        /** @type {string} */
+        currentPage: 'generate',
     },
 
     // ── 初始化 ──
-    init() {
+    async init() {
         this.bindEvents();
+        await Promise.all([
+            this.loadPromptsConfig(),
+            this.loadModels(),
+            this.loadBackgroundMaterials(),
+        ]);
     },
 
+    // ── 事件绑定 ──
     bindEvents() {
-        const { btnGenerate, btnTileset, promptInput } = this.elements;
-
-        // 按钮1: 生成材质
-        btnGenerate.addEventListener('click', () => {
-            const prompt = promptInput.value.trim();
-            if (!prompt) return;
-            Chat.generateMaterial(prompt);
+        // ── 导航Tab切换 ──
+        this.elements.navTabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                this.switchPage(tab.dataset.page);
+            });
         });
 
-        // 按钮2: 生成 Autotile
-        btnTileset.addEventListener('click', () => {
-            Chat.generateTileset();
+        // ── 生成模式切换 ──
+        this.elements.modeTabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                this.switchMode(tab.dataset.mode);
+            });
         });
 
-        // Enter 键快捷发送
-        promptInput.addEventListener('keydown', (e) => {
+        // ── 生成按钮 ──
+        this.elements.btnGenerate.addEventListener('click', () => {
+            const materialPrompt = this.elements.materialPrompt.value.trim();
+            if (!materialPrompt) {
+                this.addMessage('system', '⚠️ 请输入材质提示词');
+                return;
+            }
+            if (this.state.generationMode === 'surface' && !this.state.surfaceSelectedBgId) {
+                this.addMessage('system', '⚠️ 请在下方面板中选择一张背景图');
+                return;
+            }
+            Chat.generateTexture();
+        });
+
+        // ── Enter 键触发生成 ──
+        this.elements.materialPrompt.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
-                btnGenerate.click();
+                this.elements.btnGenerate.click();
             }
         });
 
-        // 自动更新按钮状态
+        // ── 材质库刷新 ──
+        if (this.elements.btnRefreshLibrary) {
+            this.elements.btnRefreshLibrary.addEventListener('click', () => {
+                this.loadLibraryImages();
+            });
+        }
+
+        // ── 材质库上传 (Background / Surface) ──
+        if (this.elements.btnUploadBg && this.elements.uploadBgInput) {
+            this.elements.btnUploadBg.addEventListener('click', () => {
+                this.elements.uploadBgInput.click();
+            });
+            this.elements.uploadBgInput.addEventListener('change', () => {
+                this.handleUpload('background', this.elements.uploadBgInput);
+            });
+        }
+        if (this.elements.btnUploadSf && this.elements.uploadSfInput) {
+            this.elements.btnUploadSf.addEventListener('click', () => {
+                this.elements.uploadSfInput.click();
+            });
+            this.elements.uploadSfInput.addEventListener('change', () => {
+                this.handleUpload('surface', this.elements.uploadSfInput);
+            });
+        }
+
+        // ── 图集页面选择变更 ──
+        if (this.elements.atlasBgSelect) {
+            this.elements.atlasBgSelect.addEventListener('change', () => this.updateTilesetButton());
+        }
+        if (this.elements.atlasSfSelect) {
+            this.elements.atlasSfSelect.addEventListener('change', () => this.updateTilesetButton());
+        }
+
+        // ── Autotile 按钮 ──
+        if (this.elements.btnTileset) {
+            this.elements.btnTileset.addEventListener('click', () => {
+                Chat.generateTileset();
+            });
+        }
+    },
+
+    // ── 页面切换 ──
+    switchPage(page) {
+        this.state.currentPage = page;
+
+        this.elements.navTabs.forEach(t => {
+            t.classList.toggle('active', t.dataset.page === page);
+        });
+
+        this.elements.pages.forEach(p => {
+            p.classList.toggle('active', p.id === `page-${page}`);
+        });
+
+        if (page === 'atlas') {
+            this.populateAtlasSelectors();
+        }
+        if (page === 'library') {
+            this.loadLibraryImages();
+        }
+    },
+
+    // ── 生成模式切换 ──
+    switchMode(mode) {
+        this.state.generationMode = mode;
+
+        this.elements.modeTabs.forEach(t => {
+            t.classList.toggle('active', t.dataset.mode === mode);
+        });
+
+        this.elements.bgSelectorGroup.style.display =
+            (mode === 'surface') ? 'block' : 'none';
+
+        const btn = this.elements.btnGenerate;
+        if (mode === 'background') {
+            btn.textContent = '🎨 生成 Background 纹理';
+            btn.className = 'btn btn-primary btn-large';
+        } else {
+            btn.textContent = '🗻 生成 Surface 纹理';
+            btn.className = 'btn btn-accent btn-large';
+        }
+
+        if (mode === 'surface') {
+            this.loadBackgroundMaterials();
+        }
+    },
+
+    // ── 加载配置 ──
+
+    async loadPromptsConfig() {
+        try {
+            const resp = await fetch('/api/generate/config/prompts');
+            const data = await resp.json();
+            this.elements.systemPositivePrompt.value = data.system_positive || '';
+            this.elements.systemNegativePrompt.value = data.system_negative || '';
+        } catch (e) {
+            console.error('加载系统提示词失败:', e);
+        }
+    },
+
+    async loadModels() {
+        try {
+            const resp = await fetch('/api/generate/models');
+            const data = await resp.json();
+            this._populateSelect(this.elements.checkpointSelect, data.checkpoints || []);
+            this._populateSelect(this.elements.loraSelect, data.loras || []);
+        } catch (e) {
+            console.error('加载模型列表失败:', e);
+        }
+    },
+
+    _populateSelect(selectEl, items) {
+        const defaultOpt = selectEl.querySelector('option[value=""]');
+        selectEl.innerHTML = '';
+        if (defaultOpt) {
+            selectEl.appendChild(defaultOpt.cloneNode(true));
+        } else {
+            const opt = document.createElement('option');
+            opt.value = '';
+            opt.textContent = '-- 使用默认 --';
+            selectEl.appendChild(opt);
+        }
+        items.forEach(name => {
+            const opt = document.createElement('option');
+            opt.value = name;
+            opt.textContent = name;
+            selectEl.appendChild(opt);
+        });
+    },
+
+    // ── 材质库: 图片加载 ──
+
+    async loadLibraryImages() {
+        const grid = this.elements.libraryGrid;
+        const info = this.elements.libraryInfo;
+        if (!grid) return;
+
+        grid.innerHTML = '<p class="placeholder-text">加载中...</p>';
+        if (info) info.textContent = '';
+
+        try {
+            const resp = await fetch('/api/generate/comfy-outputs?prefix=tgen-background,tgen-surface');
+            const data = await resp.json();
+            const images = data.images || [];
+
+            if (images.length === 0) {
+                grid.innerHTML = '<p class="placeholder-text">ComfyUI 输出目录为空</p>';
+                return;
+            }
+
+            if (info) info.textContent = `共 ${data.total} 张图片`;
+
+            grid.innerHTML = '';
+            images.forEach(img => {
+                const card = document.createElement('div');
+                card.className = 'library-card';
+                card.innerHTML = `
+                    <img src="${img.url}" alt="${img.filename}" loading="lazy">
+                    <div class="library-card-info">
+                        <span class="library-card-name" title="${img.filename}">${img.filename}</span>
+                        <span class="library-card-size">${img.size_kb} KB</span>
+                    </div>
+                `;
+                card.addEventListener('click', () => {
+                    window.open(img.url, '_blank');
+                });
+                grid.appendChild(card);
+            });
+        } catch (e) {
+            console.error('加载材质库失败:', e);
+            grid.innerHTML = '<p class="placeholder-text">加载失败，请确认 comfy_file_path 已正确配置</p>';
+        }
+    },
+
+    // ── 材质库: 本地上传 ──
+
+    async handleUpload(textureType, input) {
+        if (!input || !input.files || input.files.length === 0) return;
+
+        const files = Array.from(input.files);
+        const total = files.length;
+        let uploaded = 0;
+        let failed = 0;
+
+        const typeLabel = textureType === 'background' ? 'Background' : 'Surface';
+        this.addMessage('system', `📤 正在上传 ${total} 张 ${typeLabel} 图片...`);
+
+        for (const file of files) {
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+
+                const resp = await fetch(`/api/generate/comfy-outputs/upload?texture_type=${textureType}`, {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                if (resp.ok) {
+                    uploaded++;
+                } else {
+                    const err = await resp.json();
+                    console.error(`上传 ${file.name} 失败:`, err.detail);
+                    failed++;
+                }
+            } catch (e) {
+                console.error(`上传 ${file.name} 失败:`, e);
+                failed++;
+            }
+        }
+
+        // 清空文件选择
+        input.value = '';
+
+        if (failed === 0) {
+            this.addMessage('system', `✅ ${typeLabel} 上传完成: ${uploaded} 张图片`);
+        } else {
+            this.addMessage('system', `⚠️ ${typeLabel} 上传完成: ${uploaded} 成功, ${failed} 失败`);
+        }
+
+        // 刷新材质库列表
+        this.loadLibraryImages();
+    },
+
+    // ── 图集页面: 材质选择器 ──
+
+    /** 填充图集页面的 BG/SF 下拉选择器 */
+    populateAtlasSelectors() {
+        const bgSelect = this.elements.atlasBgSelect;
+        const sfSelect = this.elements.atlasSfSelect;
+
+        if (!bgSelect || !sfSelect) return;
+
+        // 保留已选值
+        const prevBg = bgSelect.value;
+        const prevSf = sfSelect.value;
+
+        // 重建选项
+        const emptyBg = '<option value="">-- 请选择 Background --</option>';
+        const emptySf = '<option value="">-- 请选择 Surface --</option>';
+
+        const bgOptions = [];
+        const sfOptions = [];
+
+        this.state.materials.forEach(m => {
+            const type = this.state.materialTypes[m.id];
+            const label = `${m.name} (${m.id})`;
+            if (type === 'background') {
+                bgOptions.push(`<option value="${m.id}">${label}</option>`);
+            } else if (type === 'surface') {
+                sfOptions.push(`<option value="${m.id}">${label}</option>`);
+            }
+        });
+
+        bgSelect.innerHTML = emptyBg + bgOptions.join('');
+        sfSelect.innerHTML = emptySf + sfOptions.join('');
+
+        // 恢复已选值
+        if (prevBg && bgOptions.some(o => o.includes(prevBg))) bgSelect.value = prevBg;
+        if (prevSf && sfOptions.some(o => o.includes(prevSf))) sfSelect.value = prevSf;
+
         this.updateTilesetButton();
     },
 
-    // ── 材质列表管理 ──
+    /** 根据图集页面选择更新按钮状态 */
+    updateTilesetButton() {
+        const btn = this.elements.btnTileset;
+        const hint = this.elements.atlasHint;
+        if (!btn) return;
 
-    /**
-     * 添加新生成的材质到侧边栏
-     * @param {string} id - 材质 ID
-     * @param {string} name - 用户输入的提示词 (截取作为名称)
-     * @param {string} url - 图片 URL
-     */
-    addMaterial(id, name, url) {
-        this.state.materials.push({ id, name, url });
-        this.renderMaterialList();
+        const bgId = this.elements.atlasBgSelect?.value || '';
+        const sfId = this.elements.atlasSfSelect?.value || '';
+        const canGenerate = bgId !== '' && sfId !== '';
+
+        btn.disabled = !canGenerate;
+        if (hint) {
+            hint.textContent = canGenerate
+                ? '已就绪，点击生成 Autotile 图集'
+                : '请在上方选择 1 张 Background 和 1 张 Surface 材质';
+        }
     },
 
-    /** 渲染侧边栏材质列表 */
-    renderMaterialList() {
-        const list = this.elements.materialList;
-        list.innerHTML = '';
+    // ── 图集页面: 获取当前选择 ──
 
-        if (this.state.materials.length === 0) {
-            list.innerHTML = '<p class="placeholder-text">尚未生成任何材质</p>';
+    getAtlasSelection() {
+        return {
+            bgId: this.elements.atlasBgSelect?.value || null,
+            sfId: this.elements.atlasSfSelect?.value || null,
+        };
+    },
+
+    getTileSize() {
+        return parseInt(this.elements.tileSize?.value || '32');
+    },
+
+    // ── 材质状态追踪 ──
+
+    addMaterial(id, name, url) {
+        if (this.state.materials.find(m => m.id === id)) return;
+        this.state.materials.push({ id, name, url });
+    },
+
+    setMaterialType(id, type) {
+        this.state.materialTypes[id] = type;
+    },
+
+    // ── Surface 模式背景图选择器 ──
+
+    async loadBackgroundMaterials() {
+        try {
+            // 从材质库 (ComfyUI 输出目录) 加载所有 Background
+            const resp = await fetch('/api/generate/comfy-outputs?prefix=tgen-background');
+            const data = await resp.json();
+            
+            const materials = (data.images || []).map(img => ({
+                id: img.filename, // 必须传文件名，后端才能直接通过文件查找
+                image_url: img.url
+            }));
+            this._renderBgSelector(materials);
+        } catch (e) {
+            console.error('加载背景材质列表失败:', e);
+        }
+    },
+
+    _renderBgSelector(materials) {
+        const grid = this.elements.bgSelectorGrid;
+        grid.innerHTML = '';
+
+        if (materials.length === 0) {
+            grid.innerHTML = '<p class="placeholder-text">尚未生成任何 Background 纹理</p>';
             return;
         }
 
-        this.state.materials.forEach((mat) => {
+        materials.forEach(mat => {
             const card = document.createElement('div');
-            card.className = 'material-card';
-            card.dataset.id = mat.id;
+            card.className = 'bg-selector-card';
+            card.dataset.bgId = mat.id;
+            card.title = mat.id;
 
-            if (mat.id === this.state.selectedBgId) {
-                card.classList.add('selected-bg');
-            }
-            if (mat.id === this.state.selectedSfId) {
-                card.classList.add('selected-sf');
+            if (mat.id === this.state.surfaceSelectedBgId) {
+                card.classList.add('selected');
             }
 
-            card.innerHTML = `
-                <img src="${mat.url}" alt="${mat.name}" loading="lazy">
-                <div class="card-name">${mat.name}</div>
-                ${mat.id === this.state.selectedBgId ? '<span class="card-badge badge-bg">BG</span>' : ''}
-                ${mat.id === this.state.selectedSfId ? '<span class="card-badge badge-sf">SF</span>' : ''}
-            `;
+            card.innerHTML = `<img src="${mat.image_url}" alt="${mat.id}" loading="lazy">`;
 
-            // 单击选为 Background，再次单击选为 Surface
-            card.addEventListener('click', () => this.selectMaterial(mat.id));
+            card.addEventListener('click', () => {
+                if (this.state.surfaceSelectedBgId === mat.id) {
+                    this.state.surfaceSelectedBgId = null;
+                } else {
+                    this.state.surfaceSelectedBgId = mat.id;
+                }
+                this._renderBgSelector(materials);
+            });
 
-            list.appendChild(card);
+            grid.appendChild(card);
         });
     },
 
-    /**
-     * 材质选择逻辑:
-     *   - 首次单击 → 选为 Background
-     *   - 该材质已是 Background → 切换为 Surface
-     *   - 该材质已是 Surface → 取消选择
-     */
-    selectMaterial(id) {
-        if (this.state.selectedBgId === id) {
-            // 当前是 BG → 切换为 Surface
-            this.state.selectedBgId = null;
-            this.state.selectedSfId = id;
-        } else if (this.state.selectedSfId === id) {
-            // 当前是 Surface → 取消
-            this.state.selectedSfId = null;
-        } else if (!this.state.selectedBgId) {
-            // 未选 BG → 选为 BG
-            this.state.selectedBgId = id;
-        } else if (!this.state.selectedSfId) {
-            // 已有 BG 无 SF → 选为 SF
-            this.state.selectedSfId = id;
-        } else {
-            // 两者都已有 → 替换 BG
-            this.state.selectedBgId = id;
-            this.state.selectedSfId = null;
-        }
+    // ── 模型选择 ──
 
-        this.renderMaterialList();
-        this.updateSelectionInfo();
-        this.updateTilesetButton();
-    },
-
-    updateSelectionInfo() {
-        const { selectedBg, selectedSf } = this.elements;
-        const findName = (id) => {
-            const mat = this.state.materials.find(m => m.id === id);
-            return mat ? mat.name : '未选择';
+    getModelSelection() {
+        return {
+            checkpoint: this.elements.checkpointSelect?.value || null,
+            lora: this.elements.loraSelect?.value || null,
         };
-        selectedBg.textContent = findName(this.state.selectedBgId);
-        selectedSf.textContent = findName(this.state.selectedSfId);
     },
 
-    /** 生成 Autotile 按钮启用条件: BG 和 SF 均已选择 */
-    updateTilesetButton() {
-        this.elements.btnTileset.disabled = !(
-            this.state.selectedBgId && this.state.selectedSfId
-        );
+    // ── 提示词 ──
+
+    getCombinedPositivePrompt() {
+        const systemPos = this.elements.systemPositivePrompt.value.trim();
+        const material = this.elements.materialPrompt.value.trim();
+        if (systemPos && material) {
+            return systemPos + ', ' + material;
+        }
+        return systemPos + material;
+    },
+
+    getNegativePrompt() {
+        return this.elements.systemNegativePrompt.value.trim() || null;
     },
 
     // ── 对话消息渲染 ──
 
-    /**
-     * 添加消息到对话区域
-     * @param {'user'|'assistant'|'system'} role
-     * @param {string} content - HTML 内容
-     * @param {string|null} msgId - 消息 ID (用于后续更新)
-     * @returns {string} msgId
-     */
     addMessage(role, content, msgId = null) {
-        const id = msgId || `msg_${Date.now()}`;
+        const id = msgId || `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         const div = document.createElement('div');
         div.className = `message ${role}`;
         div.id = id;
@@ -180,12 +502,8 @@ const UI = {
         return id;
     },
 
-    /**
-     * 添加带进度条的消息, 返回进度条元素引用
-     * @returns {{ msgId: string, progressBar: HTMLElement, progressText: HTMLElement }}
-     */
     addProgressMessage() {
-        const id = `msg_${Date.now()}`;
+        const id = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         const div = document.createElement('div');
         div.className = 'message assistant';
         div.id = id;
@@ -207,9 +525,6 @@ const UI = {
         };
     },
 
-    /**
-     * 更新进度消息
-     */
     updateProgress(msgId, percent, text) {
         const msg = document.getElementById(msgId);
         if (!msg) return;
@@ -219,18 +534,20 @@ const UI = {
         if (txt) txt.textContent = text;
     },
 
-    /**
-     * 将进度消息替换为完成的图片 + 信息
-     */
     completeProgressMessage(msgId, imageUrl, altText, extraHtml = '') {
         const msg = document.getElementById(msgId);
         if (!msg) return;
         const content = msg.querySelector('.message-content');
         if (!content) return;
 
+        let imageHtml = '';
+        if (imageUrl) {
+            imageHtml = `<img src="${imageUrl}" alt="${altText}" class="message-image large" loading="lazy">`;
+        }
+
         content.innerHTML = `
             <div>${altText}</div>
-            <img src="${imageUrl}" alt="${altText}" class="message-image large" loading="lazy">
+            ${imageHtml}
             ${extraHtml}
         `;
     },
@@ -240,11 +557,6 @@ const UI = {
         setTimeout(() => {
             msgs.scrollTop = msgs.scrollHeight;
         }, 50);
-    },
-
-    /** 获取当前选中的 Tile 尺寸 */
-    getTileSize() {
-        return parseInt(this.elements.tileSize.value);
     },
 };
 

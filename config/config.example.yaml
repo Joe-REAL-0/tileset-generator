@@ -7,6 +7,7 @@ comfyui:
   base_url: "http://127.0.0.1:8188"     # ComfyUI API 地址 (可被 .env 覆盖)
   timeout: 300                            # 生成超时 (秒)
   poll_interval: 1.0                      # 轮询间隔 (秒)
+  comfy_file_path: ""                     # ComfyUI 根目录绝对路径, 其下需包含 input/ models/ output/
 
 # SD 生成默认参数 (固定 512×512)
 generation:
