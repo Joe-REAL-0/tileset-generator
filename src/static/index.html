@@ -135,6 +135,24 @@
                     <input type="file" id="uploadSfInput" accept="image/png,image/jpeg,image/webp,image/bmp" multiple
                         style="display:none;">
                 </div>
+                <!-- ── 过滤与排序 ── -->
+                <div class="library-filters">
+                    <div class="filter-group">
+                        <label for="libFilterType">过滤:</label>
+                        <select id="libFilterType" class="filter-select">
+                            <option value="all">全部材质</option>
+                            <option value="background">只看 Background</option>
+                            <option value="surface">只看 Surface</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label for="libSortTime">排序:</label>
+                        <select id="libSortTime" class="filter-select">
+                            <option value="desc">按时间降序 (由新到旧)</option>
+                            <option value="asc">按时间升序 (由旧到新)</option>
+                        </select>
+                    </div>
+                </div>
                 <div class="library-grid" id="libraryGrid">
                     <p class="placeholder-text">加载中...</p>
                 </div>
@@ -151,17 +169,17 @@
                 </div>
 
                 <div class="atlas-selection">
-                    <div class="atlas-field">
-                        <label for="atlasBgSelect">Background 纹理</label>
-                        <select id="atlasBgSelect" class="model-select">
-                            <option value="">-- 请选择 Background --</option>
-                        </select>
+                    <div class="atlas-field-full">
+                        <label>Background 纹理</label>
+                        <div class="bg-selector-grid" id="atlasBgGrid">
+                            <p class="placeholder-text">加载中...</p>
+                        </div>
                     </div>
-                    <div class="atlas-field">
-                        <label for="atlasSfSelect">Surface 纹理</label>
-                        <select id="atlasSfSelect" class="model-select">
-                            <option value="">-- 请选择 Surface --</option>
-                        </select>
+                    <div class="atlas-field-full">
+                        <label>Surface 纹理</label>
+                        <div class="bg-selector-grid" id="atlasSfGrid">
+                            <p class="placeholder-text">加载中...</p>
+                        </div>
                     </div>
                     <div class="atlas-field">
                         <label for="tileSize">Tile 尺寸</label>
@@ -184,6 +202,12 @@
         </section>
 
     </main>
+
+    <!-- ── Image Modal ── -->
+    <div id="imageModal" class="image-modal">
+        <span class="image-modal-close" id="imageModalClose">&times;</span>
+        <img class="image-modal-content" id="imageModalImg">
+    </div>
 
     <!-- ── Scripts ── -->
     <script src="/js/ws.js"></script>

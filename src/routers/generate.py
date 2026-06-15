@@ -199,10 +199,21 @@ async def _run_generation(task_id: str, workflow: dict, generate_type: str, bg_f
                 message=f"SD 采样中... {pct}%"
             )
 
-        images = await client.generate_with_progress(workflow, progress_callback=on_progress)
+        images_info = await client.generate_with_progress(workflow, progress_callback=on_progress)
 
         image_urls: list[str] = []
-        for i, img_bytes in enumerate(images):
+        comfy_filenames: list[str] = []
+        for i, (img_bytes, comfy_filename) in enumerate(images_info):
+            # 立即从 ComfyUI output 中删除原文件，以免污染目录 (由用户手动保存时再写回)
+            comfy_out_dir = _resolve_comfy_output_dir()
+            if comfy_out_dir and comfy_out_dir.exists():
+                try:
+                    comfy_file = comfy_out_dir / comfy_filename
+                    if comfy_file.exists():
+                        comfy_file.unlink()
+                except Exception as del_err:
+                    print(f"Error removing comfyui output: {del_err}")
+
             if generate_type == "surface" and bg_file and bg_file.exists():
                 try:
                     surface_img = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
@@ -227,6 +238,7 @@ async def _run_generation(task_id: str, workflow: dict, generate_type: str, bg_f
                     out_buffer = io.BytesIO()
                     surface_img.save(out_buffer, format="PNG")
                     img_bytes = out_buffer.getvalue()
+                            
                 except Exception as e:
                     print(f"Error removing background from surface: {e}")
 
@@ -234,10 +246,12 @@ async def _run_generation(task_id: str, workflow: dict, generate_type: str, bg_f
             filepath = OUTPUT_DIR / filename
             filepath.write_bytes(img_bytes)
             image_urls.append(f"{OUTPUT_URL_PREFIX}/{filename}")
+            comfy_filenames.append(comfy_filename)
 
         _task_store[task_id].update({
             "status": "completed",
             "image_urls": image_urls,
+            "comfy_filenames": comfy_filenames,
         })
 
         await manager.send_progress(
@@ -513,3 +527,52 @@ async def get_task_status(task_id: str):
     if task_id not in _task_store:
         raise HTTPException(status_code=404, detail="任务不存在")
     return _task_store[task_id]
+
+
+@router.post("/{task_id}/save")
+async def save_task_material(task_id: str):
+    """保存材质: 将本地临时预览文件写回到 ComfyUI output 目录中"""
+    if task_id not in _task_store:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    
+    task_info = _task_store[task_id]
+    if task_info.get("status") != "completed":
+        raise HTTPException(status_code=400, detail="任务未完成")
+    if task_info.get("saved"):
+        return {"status": "already_saved"}
+        
+    comfy_out_dir = _resolve_comfy_output_dir()
+    if not comfy_out_dir or not comfy_out_dir.exists():
+        raise HTTPException(status_code=500, detail="ComfyUI output 目录未找到")
+        
+    image_urls = task_info.get("image_urls", [])
+    comfy_filenames = task_info.get("comfy_filenames", [])
+    
+    for url, c_filename in zip(image_urls, comfy_filenames):
+        filename = url.split("/")[-1]
+        filepath = OUTPUT_DIR / filename
+        if filepath.exists():
+            dest_path = comfy_out_dir / c_filename
+            shutil.copy(filepath, dest_path)
+            
+    task_info["saved"] = True
+    return {"status": "success"}
+
+
+@router.post("/{task_id}/discard")
+async def discard_task_material(task_id: str):
+    """丢弃材质: 删除本地预览文件"""
+    if task_id not in _task_store:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    
+    task_info = _task_store[task_id]
+    image_urls = task_info.get("image_urls", [])
+    
+    for url in image_urls:
+        filename = url.split("/")[-1]
+        filepath = OUTPUT_DIR / filename
+        if filepath.exists():
+            filepath.unlink()
+            
+    task_info["status"] = "discarded"
+    return {"status": "success"}

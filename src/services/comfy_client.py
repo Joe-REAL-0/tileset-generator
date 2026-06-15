@@ -107,17 +107,17 @@ class ComfyClient:
                 return history
             await asyncio.sleep(poll_interval)
 
-    async def generate(self, workflow: dict[str, Any]) -> list[bytes]:
+    async def generate(self, workflow: dict[str, Any]) -> list[tuple[bytes, str]]:
         """
         一站式生成接口: 提交工作流 → 等待完成 → 下载所有输出图片
 
         Returns:
-            生成图片的二进制数据列表
+            生成图片的二进制数据列表和文件名的元组
         """
         prompt_id = await self.queue_prompt(workflow)
         history = await self.wait_for_completion(prompt_id)
 
-        images: list[bytes] = []
+        images: list[tuple[bytes, str]] = []
         for node_id, node_output in history.get("outputs", {}).items():
             for img_info in node_output.get("images", []):
                 img_bytes = await self.get_image(
@@ -125,11 +125,11 @@ class ComfyClient:
                     subfolder=img_info.get("subfolder", ""),
                     folder_type=img_info.get("type", "output"),
                 )
-                images.append(img_bytes)
+                images.append((img_bytes, img_info["filename"]))
 
         return images
 
-    async def generate_with_progress(self, workflow: dict[str, Any], progress_callback: Callable = None) -> list[bytes]:
+    async def generate_with_progress(self, workflow: dict[str, Any], progress_callback: Callable = None) -> list[tuple[bytes, str]]:
         """
         带实时进度推送的生成接口
         """
@@ -170,7 +170,7 @@ class ComfyClient:
         # 获取历史记录并下载图片
         history = await self.wait_for_completion(prompt_id)
 
-        images: list[bytes] = []
+        images: list[tuple[bytes, str]] = []
         for node_id, node_output in history.get("outputs", {}).items():
             for img_info in node_output.get("images", []):
                 img_bytes = await self.get_image(
@@ -178,6 +178,6 @@ class ComfyClient:
                     subfolder=img_info.get("subfolder", ""),
                     folder_type=img_info.get("type", "output"),
                 )
-                images.append(img_bytes)
+                images.append((img_bytes, img_info["filename"]))
 
         return images

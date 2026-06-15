@@ -458,6 +458,41 @@ body {
     color: var(--text-secondary);
 }
 
+.library-filters {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 16px;
+    flex-shrink: 0;
+    align-items: center;
+}
+
+.filter-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.filter-group label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.filter-select {
+    padding: 6px 10px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    cursor: pointer;
+    outline: none;
+}
+
+.filter-select:focus {
+    border-color: var(--accent-blue);
+}
+
 .library-grid {
     flex: 1;
     display: grid;
@@ -476,6 +511,28 @@ body {
     transition: border-color 0.2s;
     position: relative;
     aspect-ratio: 1;
+}
+
+.library-card-type {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(2px);
+    z-index: 10;
+}
+
+.type-background {
+    background: rgba(33, 150, 243, 0.7);
+}
+
+.type-surface {
+    background: rgba(233, 69, 96, 0.7);
 }
 
 .library-card:hover {
@@ -583,7 +640,14 @@ body {
     min-width: 200px;
 }
 
-.atlas-field > label {
+.atlas-field-full {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+}
+
+.atlas-field > label, .atlas-field-full > label {
     font-size: 0.8rem;
     font-weight: 600;
     color: var(--text-secondary);
@@ -659,4 +723,50 @@ body {
 ::-webkit-scrollbar-thumb {
     background: var(--border-color);
     border-radius: 3px;
+}
+
+/* ── Image Modal ── */
+.image-modal {
+    display: none;
+    position: fixed;
+    z-index: 9999;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(5px);
+    justify-content: center;
+    align-items: center;
+}
+
+.image-modal.active {
+    display: flex;
+}
+
+.image-modal-content {
+    max-width: 90%;
+    max-height: 90%;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    image-rendering: pixelated;
+    object-fit: contain;
+}
+
+.image-modal-close {
+    position: absolute;
+    top: 20px;
+    right: 35px;
+    color: #f1f1f1;
+    font-size: 40px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: 0.3s;
+}
+
+.image-modal-close:hover,
+.image-modal-close:focus {
+    color: #bbb;
+    text-decoration: none;
+    cursor: pointer;
 }

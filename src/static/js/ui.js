@@ -36,20 +36,29 @@ const UI = {
         uploadSfInput: document.getElementById('uploadSfInput'),
         libraryGrid: document.getElementById('libraryGrid'),
         libraryInfo: document.getElementById('libraryInfo'),
+        libFilterType: document.getElementById('libFilterType'),
+        libSortTime: document.getElementById('libSortTime'),
 
         // 图集页面
-        atlasBgSelect: document.getElementById('atlasBgSelect'),
-        atlasSfSelect: document.getElementById('atlasSfSelect'),
+        atlasBgGrid: document.getElementById('atlasBgGrid'),
+        atlasSfGrid: document.getElementById('atlasSfGrid'),
         tileSize: document.getElementById('tileSize'),
         btnTileset: document.getElementById('btnTileset'),
         atlasHint: document.getElementById('atlasHint'),
 
         // 对话区
         chatMessages: document.getElementById('chatMessages'),
+
+        // 图片预览 Modal
+        imageModal: document.getElementById('imageModal'),
+        imageModalClose: document.getElementById('imageModalClose'),
+        imageModalImg: document.getElementById('imageModalImg'),
     },
 
     // ── 状态 ──
     state: {
+        /** @type {Array<Object>} 材质库加载的所有原始数据 */
+        libraryRawData: [],
         /** @type {Array<{id: string, name: string, url: string}>} */
         materials: [],
         /** @type {Object<string, 'background'|'surface'>} 材质类型追踪 */
@@ -62,6 +71,10 @@ const UI = {
         currentPage: 'generate',
         /** @type {Array<string>} 历史提示词 */
         promptHistory: [],
+        /** @type {string|null} 图集页面选中的背景图 ID */
+        atlasSelectedBgId: null,
+        /** @type {string|null} 图集页面选中的表面图 ID */
+        atlasSelectedSfId: null,
     },
 
     // ── 初始化 ──
@@ -119,6 +132,18 @@ const UI = {
             });
         }
 
+        // ── 材质库过滤与排序 ──
+        if (this.elements.libFilterType) {
+            this.elements.libFilterType.addEventListener('change', () => {
+                this.renderLibraryImages();
+            });
+        }
+        if (this.elements.libSortTime) {
+            this.elements.libSortTime.addEventListener('change', () => {
+                this.renderLibraryImages();
+            });
+        }
+
         // ── 材质库上传 (Background / Surface) ──
         if (this.elements.btnUploadBg && this.elements.uploadBgInput) {
             this.elements.btnUploadBg.addEventListener('click', () => {
@@ -138,17 +163,24 @@ const UI = {
         }
 
         // ── 图集页面选择变更 ──
-        if (this.elements.atlasBgSelect) {
-            this.elements.atlasBgSelect.addEventListener('change', () => this.updateTilesetButton());
-        }
-        if (this.elements.atlasSfSelect) {
-            this.elements.atlasSfSelect.addEventListener('change', () => this.updateTilesetButton());
-        }
+        // (在渲染 grid 时绑定事件)
 
         // ── Autotile 按钮 ──
         if (this.elements.btnTileset) {
             this.elements.btnTileset.addEventListener('click', () => {
                 Chat.generateTileset();
+            });
+        }
+
+        // ── 图片预览 Modal 关闭 ──
+        if (this.elements.imageModal) {
+            this.elements.imageModalClose.addEventListener('click', () => {
+                this.elements.imageModal.classList.remove('active');
+            });
+            this.elements.imageModal.addEventListener('click', (e) => {
+                if (e.target === this.elements.imageModal) {
+                    this.elements.imageModal.classList.remove('active');
+                }
             });
         }
     },
@@ -254,35 +286,80 @@ const UI = {
         try {
             const resp = await fetch('/api/generate/comfy-outputs?prefix=tgen-background,tgen-surface');
             const data = await resp.json();
-            const images = data.images || [];
+            this.state.libraryRawData = data.images || [];
 
-            if (images.length === 0) {
-                grid.innerHTML = '<p class="placeholder-text">ComfyUI 输出目录为空</p>';
-                return;
-            }
-
-            if (info) info.textContent = `共 ${data.total} 张图片`;
-
-            grid.innerHTML = '';
-            images.forEach(img => {
-                const card = document.createElement('div');
-                card.className = 'library-card';
-                card.innerHTML = `
-                    <img src="${img.url}" alt="${img.filename}" loading="lazy">
-                    <div class="library-card-info">
-                        <span class="library-card-name" title="${img.filename}">${img.filename}</span>
-                        <span class="library-card-size">${img.size_kb} KB</span>
-                    </div>
-                `;
-                card.addEventListener('click', () => {
-                    window.open(img.url, '_blank');
-                });
-                grid.appendChild(card);
-            });
+            this.renderLibraryImages();
         } catch (e) {
             console.error('加载材质库失败:', e);
             grid.innerHTML = '<p class="placeholder-text">加载失败，请确认 comfy_file_path 已正确配置</p>';
         }
+    },
+
+    renderLibraryImages() {
+        const grid = this.elements.libraryGrid;
+        const info = this.elements.libraryInfo;
+        if (!grid) return;
+
+        let images = [...this.state.libraryRawData];
+
+        if (images.length === 0) {
+            grid.innerHTML = '<p class="placeholder-text">ComfyUI 输出目录为空</p>';
+            if (info) info.textContent = '';
+            return;
+        }
+
+        // 1. 过滤
+        const filterType = this.elements.libFilterType?.value || 'all';
+        if (filterType !== 'all') {
+            images = images.filter(img => img.filename.includes(filterType));
+        }
+
+        // 2. 排序分组
+        const sortTime = this.elements.libSortTime?.value || 'desc';
+        
+        images.sort((a, b) => {
+            const typeA = a.filename.includes('background') ? 0 : 1;
+            const typeB = b.filename.includes('background') ? 0 : 1;
+            
+            // 先按类型分组 (background 在前, surface 在后)
+            if (typeA !== typeB) {
+                return typeA - typeB;
+            }
+
+            // 类型相同，按时间排序
+            const indexA = this.state.libraryRawData.indexOf(a);
+            const indexB = this.state.libraryRawData.indexOf(b);
+            
+            if (sortTime === 'desc') {
+                return indexA - indexB;
+            } else {
+                return indexB - indexA;
+            }
+        });
+
+        if (info) info.textContent = `共 ${images.length} 张图片`;
+
+        grid.innerHTML = '';
+        images.forEach(img => {
+            const isBackground = img.filename.includes('background');
+            const typeLabel = isBackground ? 'Background' : 'Surface';
+            const typeClass = isBackground ? 'type-background' : 'type-surface';
+
+            const card = document.createElement('div');
+            card.className = 'library-card';
+            card.innerHTML = `
+                <div class="library-card-type ${typeClass}">${typeLabel}</div>
+                <img src="${img.url}" alt="${img.filename}" loading="lazy">
+                <div class="library-card-info">
+                    <span class="library-card-name" title="${img.filename}">${img.filename}</span>
+                    <span class="library-card-size">${img.size_kb} KB</span>
+                </div>
+            `;
+            card.addEventListener('click', () => {
+                this.showImageModal(img.url);
+            });
+            grid.appendChild(card);
+        });
     },
 
     // ── 材质库: 本地上传 ──
@@ -336,42 +413,63 @@ const UI = {
 
     // ── 图集页面: 材质选择器 ──
 
-    /** 填充图集页面的 BG/SF 下拉选择器 */
-    populateAtlasSelectors() {
-        const bgSelect = this.elements.atlasBgSelect;
-        const sfSelect = this.elements.atlasSfSelect;
+    /** 填充图集页面的 BG/SF 选择器 */
+    async populateAtlasSelectors() {
+        const bgGrid = this.elements.atlasBgGrid;
+        const sfGrid = this.elements.atlasSfGrid;
+        if (!bgGrid || !sfGrid) return;
 
-        if (!bgSelect || !sfSelect) return;
+        bgGrid.innerHTML = '<p class="placeholder-text">加载中...</p>';
+        sfGrid.innerHTML = '<p class="placeholder-text">加载中...</p>';
 
-        // 保留已选值
-        const prevBg = bgSelect.value;
-        const prevSf = sfSelect.value;
+        try {
+            const resp = await fetch('/api/generate/comfy-outputs?prefix=tgen-background,tgen-surface');
+            const data = await resp.json();
+            const images = data.images || [];
 
-        // 重建选项
-        const emptyBg = '<option value="">-- 请选择 Background --</option>';
-        const emptySf = '<option value="">-- 请选择 Surface --</option>';
+            const bgs = images.filter(img => img.filename.includes('background'));
+            const sfs = images.filter(img => img.filename.includes('surface'));
 
-        const bgOptions = [];
-        const sfOptions = [];
+            this._renderAtlasGrid(bgGrid, bgs, 'background');
+            this._renderAtlasGrid(sfGrid, sfs, 'surface');
+        } catch (e) {
+            console.error('加载图集材质选择器失败:', e);
+            bgGrid.innerHTML = '<p class="placeholder-text">加载失败</p>';
+            sfGrid.innerHTML = '<p class="placeholder-text">加载失败</p>';
+        }
+    },
 
-        this.state.materials.forEach(m => {
-            const type = this.state.materialTypes[m.id];
-            const label = `${m.name} (${m.id})`;
-            if (type === 'background') {
-                bgOptions.push(`<option value="${m.id}">${label}</option>`);
-            } else if (type === 'surface') {
-                sfOptions.push(`<option value="${m.id}">${label}</option>`);
+    _renderAtlasGrid(grid, materials, type) {
+        grid.innerHTML = '';
+        if (materials.length === 0) {
+            grid.innerHTML = `<p class="placeholder-text">尚未生成任何 ${type} 纹理</p>`;
+            return;
+        }
+
+        materials.forEach(mat => {
+            const card = document.createElement('div');
+            card.className = 'bg-selector-card';
+            card.title = mat.filename;
+            
+            const selectedId = type === 'background' ? this.state.atlasSelectedBgId : this.state.atlasSelectedSfId;
+            if (mat.filename === selectedId) {
+                card.classList.add('selected');
             }
+
+            card.innerHTML = `<img src="${mat.url}" alt="${mat.filename}" loading="lazy">`;
+
+            card.addEventListener('click', () => {
+                if (type === 'background') {
+                    this.state.atlasSelectedBgId = this.state.atlasSelectedBgId === mat.filename ? null : mat.filename;
+                } else {
+                    this.state.atlasSelectedSfId = this.state.atlasSelectedSfId === mat.filename ? null : mat.filename;
+                }
+                this._renderAtlasGrid(grid, materials, type);
+                this.updateTilesetButton();
+            });
+
+            grid.appendChild(card);
         });
-
-        bgSelect.innerHTML = emptyBg + bgOptions.join('');
-        sfSelect.innerHTML = emptySf + sfOptions.join('');
-
-        // 恢复已选值
-        if (prevBg && bgOptions.some(o => o.includes(prevBg))) bgSelect.value = prevBg;
-        if (prevSf && sfOptions.some(o => o.includes(prevSf))) sfSelect.value = prevSf;
-
-        this.updateTilesetButton();
     },
 
     /** 根据图集页面选择更新按钮状态 */
@@ -380,10 +478,7 @@ const UI = {
         const hint = this.elements.atlasHint;
         if (!btn) return;
 
-        const bgId = this.elements.atlasBgSelect?.value || '';
-        const sfId = this.elements.atlasSfSelect?.value || '';
-        const canGenerate = bgId !== '' && sfId !== '';
-
+        const canGenerate = this.state.atlasSelectedBgId && this.state.atlasSelectedSfId;
         btn.disabled = !canGenerate;
         if (hint) {
             hint.textContent = canGenerate
@@ -396,8 +491,8 @@ const UI = {
 
     getAtlasSelection() {
         return {
-            bgId: this.elements.atlasBgSelect?.value || null,
-            sfId: this.elements.atlasSfSelect?.value || null,
+            bgId: this.state.atlasSelectedBgId,
+            sfId: this.state.atlasSelectedSfId,
         };
     },
 
@@ -580,6 +675,12 @@ const UI = {
             ${imageHtml}
             ${extraHtml}
         `;
+    },
+
+    showImageModal(url) {
+        if (!this.elements.imageModal || !this.elements.imageModalImg) return;
+        this.elements.imageModalImg.src = url;
+        this.elements.imageModal.classList.add('active');
     },
 
     _scrollToBottom() {
