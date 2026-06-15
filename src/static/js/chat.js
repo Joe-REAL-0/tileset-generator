@@ -22,8 +22,10 @@ const Chat = {
             ? materialPrompt.substring(0, 24) + '...'
             : materialPrompt;
 
-        // 清空材质输入
-        UI.elements.materialPrompt.value = '';
+        // 记录历史提示词
+        UI.addPromptToHistory(materialPrompt);
+        // 不再清空材质输入，保留供用户反复生成
+        // UI.elements.materialPrompt.value = '';
 
         // 用户消息
         let userMsg = `${emoji} 生成 ${typeLabel}: <b>${shortName}</b>`;

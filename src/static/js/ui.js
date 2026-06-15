@@ -21,6 +21,7 @@ const UI = {
         systemPositivePrompt: document.getElementById('systemPositivePrompt'),
         systemNegativePrompt: document.getElementById('systemNegativePrompt'),
         materialPrompt: document.getElementById('materialPrompt'),
+        promptHistoryList: document.getElementById('promptHistoryList'),
         checkpointSelect: document.getElementById('checkpointSelect'),
         loraSelect: document.getElementById('loraSelect'),
         bgSelectorGroup: document.getElementById('bgSelectorGroup'),
@@ -59,6 +60,8 @@ const UI = {
         surfaceSelectedBgId: null,
         /** @type {string} */
         currentPage: 'generate',
+        /** @type {Array<string>} 历史提示词 */
+        promptHistory: [],
     },
 
     // ── 初始化 ──
@@ -487,6 +490,33 @@ const UI = {
 
     getNegativePrompt() {
         return this.elements.systemNegativePrompt.value.trim() || null;
+    },
+
+    // ── 提示词历史 ──
+
+    addPromptToHistory(prompt) {
+        if (!prompt) return;
+        // 如果已经存在，移到最前面
+        const index = this.state.promptHistory.indexOf(prompt);
+        if (index > -1) {
+            this.state.promptHistory.splice(index, 1);
+        }
+        this.state.promptHistory.unshift(prompt);
+        // 限制最多保存20条
+        if (this.state.promptHistory.length > 20) {
+            this.state.promptHistory.pop();
+        }
+        this._renderPromptHistory();
+    },
+
+    _renderPromptHistory() {
+        if (!this.elements.promptHistoryList) return;
+        this.elements.promptHistoryList.innerHTML = '';
+        this.state.promptHistory.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p;
+            this.elements.promptHistoryList.appendChild(opt);
+        });
     },
 
     // ── 对话消息渲染 ──

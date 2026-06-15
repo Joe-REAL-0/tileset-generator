@@ -15,9 +15,11 @@
 #              → WorkflowEditor("surface") → ComfyUI → 输出
 #   前端通过 WebSocket 获取实时进度推送
 
+import io
 import shutil
 import uuid
 from pathlib import Path
+from PIL import Image
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
 from src.schemas.generate import (
     GenerateRequest, GenerateResponse,
@@ -173,7 +175,7 @@ def _build_comfy_prompt(
     return editor.get_workflow()
 
 
-async def _run_generation(task_id: str, workflow: dict, generate_type: str):
+async def _run_generation(task_id: str, workflow: dict, generate_type: str, bg_file: Path | None = None):
     """后台异步执行 SD 生成任务, 并更新 _task_store, 通过 WebSocket 推送进度"""
     config = load_config()
     client = ComfyClient(
@@ -201,6 +203,33 @@ async def _run_generation(task_id: str, workflow: dict, generate_type: str):
 
         image_urls: list[str] = []
         for i, img_bytes in enumerate(images):
+            if generate_type == "surface" and bg_file and bg_file.exists():
+                try:
+                    surface_img = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
+                    bg_img = Image.open(bg_file).convert("RGBA")
+                    
+                    if surface_img.size != bg_img.size:
+                        bg_img = bg_img.resize(surface_img.size)
+                        
+                    surface_data = surface_img.load()
+                    bg_data = bg_img.load()
+                    
+                    width, height = surface_img.size
+                    tolerance = config.generation.surface_background_tolerance
+                    for y in range(height):
+                        for x in range(width):
+                            sr, sg, sb, sa = surface_data[x, y]
+                            br, bg, bb, ba = bg_data[x, y]
+                            
+                            if abs(sr - br) <= tolerance and abs(sg - bg) <= tolerance and abs(sb - bb) <= tolerance:
+                                surface_data[x, y] = (0, 0, 0, 0)
+                                
+                    out_buffer = io.BytesIO()
+                    surface_img.save(out_buffer, format="PNG")
+                    img_bytes = out_buffer.getvalue()
+                except Exception as e:
+                    print(f"Error removing background from surface: {e}")
+
             filename = f"{task_id}_{i}.png"
             filepath = OUTPUT_DIR / filename
             filepath.write_bytes(img_bytes)
@@ -250,6 +279,7 @@ async def generate_texture(
     task_id = f"gen_{uuid.uuid4().hex[:12]}"
 
     bg_filename: str | None = None
+    bg_file: Path | None = None
     if request.generate_type == "surface":
         if not request.background_image_id:
             raise HTTPException(
@@ -305,7 +335,7 @@ async def generate_texture(
         "generate_type": request.generate_type,
     }
 
-    background_tasks.add_task(_run_generation, task_id, workflow, request.generate_type)
+    background_tasks.add_task(_run_generation, task_id, workflow, request.generate_type, bg_file)
 
     return GenerateResponse(
         task_id=task_id,

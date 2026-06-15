@@ -49,6 +49,7 @@ class GenerationConfig(BaseModel):
     default_cfg: float = 8.0
     default_sampler: str = "euler"
     default_scheduler: str = "simple"
+    surface_background_tolerance: int = 15
 
 
 class TilesetConfig(BaseModel):

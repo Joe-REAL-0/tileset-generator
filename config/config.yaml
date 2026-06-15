@@ -14,6 +14,7 @@ generation:
   default_cfg: 8.0
   default_sampler: "euler"
   default_scheduler: "simple"
+  surface_background_tolerance: 15        # 去除背景时的容差值 (0-255)
 
 # Tileset 拼合参数
 tileset:

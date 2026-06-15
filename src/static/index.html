@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tileset Generator</title>
     <link rel="stylesheet" href="/css/style.css">
 </head>
+
 <body>
     <!-- ── 顶部导航栏 ── -->
     <header class="header">
@@ -28,11 +30,11 @@
                     <div class="message system">
                         <div class="message-content">
                             👋 欢迎使用 Tileset Generator!<br><br>
-                            <b>两种生成模式:</b><br>
-                            🖼️ <b>Background 纹理</b> — 纯文生图，从噪声生成无缝背景纹理<br>
-                            🗻 <b>Surface 纹理</b> — 图生图+遮罩修补，基于背景图生成表面纹理<br><br>
-                            <b>提示词结构:</b><br>
-                            系统提示词 (控制风格) + 材质提示词 (描述内容) → 自动整合发送
+                            <b>快来使用AI创建你想要的地图材质吧:(这部分功能需正确配置comfyUI)</b><br>
+                            🖼️ <b>Background 纹理</b> — 从噪声中生成无缝背景纹理<br>
+                            🗻 <b>Surface 纹理</b> — 基于背景图配合遮罩生成的表面纹理<br><br>
+                            你也可以去素材库中上传自己绘制的background与surface纹理<br><br>
+                            选中一份background+一份surface即可生成完整的tileset！<br><br>
                         </div>
                     </div>
                 </div>
@@ -54,28 +56,20 @@
                 <div class="input-group">
                     <label for="systemPositivePrompt">
                         正向系统提示词
-                        <span class="label-hint">💡 建议不要修改，系统已为你配置最佳参数</span>
+                        <span class="label-hint">💡 不建议修改，可能导致生成效果变差</span>
                     </label>
-                    <textarea
-                        id="systemPositivePrompt"
-                        class="prompt-textarea"
-                        rows="3"
-                        placeholder="加载中..."
-                    ></textarea>
+                    <textarea id="systemPositivePrompt" class="prompt-textarea" rows="3"
+                        placeholder="加载中..."></textarea>
                 </div>
 
                 <!-- 反向系统提示词 -->
                 <div class="input-group">
                     <label for="systemNegativePrompt">
                         反向系统提示词
-                        <span class="label-hint">💡 建议不要修改，系统已为你配置最佳参数</span>
+                        <span class="label-hint">💡 不建议修改，可能导致生成效果变差</span>
                     </label>
-                    <textarea
-                        id="systemNegativePrompt"
-                        class="prompt-textarea"
-                        rows="3"
-                        placeholder="加载中..."
-                    ></textarea>
+                    <textarea id="systemNegativePrompt" class="prompt-textarea" rows="3"
+                        placeholder="加载中..."></textarea>
                 </div>
 
                 <!-- 材质提示词 -->
@@ -84,13 +78,9 @@
                         材质提示词
                         <span class="label-hint">输入材质的种类、颜色等信息 (3-4 个词)</span>
                     </label>
-                    <input
-                        type="text"
-                        id="materialPrompt"
-                        class="material-input"
-                        placeholder="例如: dirt, brown, earthy"
-                        autocomplete="off"
-                    >
+                    <input type="text" id="materialPrompt" class="material-input" placeholder="例如: dirt, brown, earthy"
+                        autocomplete="off" list="promptHistoryList">
+                    <datalist id="promptHistoryList"></datalist>
                 </div>
 
                 <!-- 模型选择 -->
@@ -140,8 +130,10 @@
                     <button id="btnRefreshLibrary" class="btn btn-primary btn-sm">🔄 刷新</button>
                     <button id="btnUploadBg" class="btn btn-accent btn-sm">📤 上传 Background</button>
                     <button id="btnUploadSf" class="btn btn-accent btn-sm">📤 上传 Surface</button>
-                    <input type="file" id="uploadBgInput" accept="image/png,image/jpeg,image/webp,image/bmp" multiple style="display:none;">
-                    <input type="file" id="uploadSfInput" accept="image/png,image/jpeg,image/webp,image/bmp" multiple style="display:none;">
+                    <input type="file" id="uploadBgInput" accept="image/png,image/jpeg,image/webp,image/bmp" multiple
+                        style="display:none;">
+                    <input type="file" id="uploadSfInput" accept="image/png,image/jpeg,image/webp,image/bmp" multiple
+                        style="display:none;">
                 </div>
                 <div class="library-grid" id="libraryGrid">
                     <p class="placeholder-text">加载中...</p>
@@ -198,4 +190,5 @@
     <script src="/js/ui.js"></script>
     <script src="/js/chat.js"></script>
 </body>
+
 </html>
