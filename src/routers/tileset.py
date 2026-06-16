@@ -8,10 +8,9 @@
 #
 # 完整管线:
 #   1. 加载 background + surface 纹理
-#   2. ImageProcessor.downscale() → 缩放到目标尺寸
-#   3. ImageProcessor.nine_slice(surface) → 切割为 8 个子区域
-#   4. AutotileEngine.generate_all() → 合成 47 个 tile 变体
-#   5. TilesetBuilder.build_with_metadata() → 拼接 + 元数据
+#   2. AutotileEngine(bg, sf) → 内部完成缩放 + 旋转复用拆分
+#   3. engine.generate_all() → 生成 47 个 tile 并保存到 services/image/
+#   4. TilesetBuilder → 拼接为 autotile 图集 + 元数据
 
 import uuid
 from pathlib import Path
@@ -37,11 +36,13 @@ _tileset_store: dict[str, dict] = {}
 
 def _load_texture(image_id: str) -> Image.Image:
     """
-    根据 image_id 从 output/textures/ 加载纹理图片
-
-    image_id 格式: "gen_<uuid>" (由 generate.py 生成)
-    图片存储为: output/textures/<image_id>_0.png
+    根据 image_id 加载纹理图片
     """
+    from src.routers.generate import _find_background_file
+    file_path = _find_background_file(image_id)
+    if file_path and file_path.exists():
+        return Image.open(file_path).convert("RGBA")
+
     # 尝试匹配文件 (可能有 _0, _1 等后缀)
     for filepath in TEXTURES_DIR.glob(f"{image_id}*.png"):
         return Image.open(filepath).convert("RGBA")
@@ -69,40 +70,33 @@ async def _run_autotile_pipeline(
         sf_image = _load_texture(sf_id)
 
         await manager.send_progress(
-            task_id, "processing", 15, "缩放纹理..."
+            task_id, "processing", 15, "初始化 AutotileEngine..."
         )
 
-        # 2. 缩放到目标尺寸
-        bg_scaled = ImageProcessor.downscale(bg_image, tile_size)
-        sf_scaled = ImageProcessor.downscale(sf_image, tile_size)
+        # 2. 创建引擎（内部自动完成缩放 + 旋转复用拆分 surface）
+        engine = AutotileEngine(bg_image, sf_image, tile_size=tile_size)
 
         await manager.send_progress(
-            task_id, "processing", 30, "切割 surface 子区域..."
+            task_id, "composing", 30, "合成 47 个 tile 变体..."
         )
 
-        # 3. nine_slice 切割 surface 为 8 个子区域
-        surface_parts = ImageProcessor.nine_slice(sf_scaled)
+        # 3. 生成 47 个 tile 并保存到 services/image/
+        engine.generate_all()
 
         await manager.send_progress(
-            task_id, "composing", 40, "合成 47 个 tile 变体..."
+            task_id, "composing", 60, "拼接 autotile 图集..."
         )
 
-        # 4. AutotileEngine 合成
-        engine = AutotileEngine(bg_scaled, surface_parts)
-        tiles = engine.generate_all()
-
-        await manager.send_progress(
-            task_id, "composing", 70, "拼接 autotile 图集..."
-        )
-
-        # 5. TilesetBuilder 拼接
+        # 4. 用 TilesetBuilder 拼接图集
         builder = TilesetBuilder(tile_size)
-        for mask, tile_img in tiles:
-            builder.add_tile(mask, tile_img)
+        for mask in engine.valid_masks:
+            tile_img = engine.compose_tile(mask)
+            binary_str = engine.mask_to_binary(mask)
+            builder.add_tile(binary_str, tile_img)
 
         atlas, metadata = builder.build_with_metadata()
 
-        # 6. 保存
+        # 5. 保存图集
         tileset_filename = f"{task_id}.png"
         tileset_path = TILESETS_DIR / tileset_filename
         builder.save(tileset_path)
@@ -194,15 +188,17 @@ async def get_tileset_status(tileset_id: str):
 
 @router.get("/tilesets")
 async def list_tilesets():
-    """列出所有已生成的 tileset"""
-    return [
-        {
-            "tileset_id": tid,
-            "status": info["status"],
-            "tileset_url": info.get("tileset_url"),
-        }
-        for tid, info in _tileset_store.items()
-    ]
+    """列出所有已生成的 tileset (读取 output/tilesets)"""
+    tilesets = []
+    if TILESETS_DIR.exists():
+        for f in sorted(TILESETS_DIR.glob("*.png"), key=lambda x: x.stat().st_mtime, reverse=True):
+            tilesets.append({
+                "tileset_id": f.stem,
+                "status": "completed",
+                "tileset_url": f"/output/tilesets/{f.name}",
+                "filename": f.name
+            })
+    return tilesets
 
 
 @router.get("/tilesets/{tileset_id}/download")

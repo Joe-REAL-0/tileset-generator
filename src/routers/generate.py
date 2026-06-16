@@ -24,6 +24,7 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
 from src.schemas.generate import (
     GenerateRequest, GenerateResponse,
     ModelsListResponse, PromptsConfigResponse,
+    ReprocessRequest
 )
 from src.services.workflow_editor import WorkflowEditor
 from src.services.comfy_client import ComfyClient
@@ -175,7 +176,7 @@ def _build_comfy_prompt(
     return editor.get_workflow()
 
 
-async def _run_generation(task_id: str, workflow: dict, generate_type: str, bg_file: Path | None = None):
+async def _run_generation(task_id: str, workflow: dict, generate_type: str, bg_file: Path | None = None, tolerance: int | None = None):
     """后台异步执行 SD 生成任务, 并更新 _task_store, 通过 WebSocket 推送进度"""
     config = load_config()
     client = ComfyClient(
@@ -216,6 +217,10 @@ async def _run_generation(task_id: str, workflow: dict, generate_type: str, bg_f
 
             if generate_type == "surface" and bg_file and bg_file.exists():
                 try:
+                    raw_filename = f"{task_id}_{i}_raw.png"
+                    raw_filepath = OUTPUT_DIR / raw_filename
+                    raw_filepath.write_bytes(img_bytes)
+
                     surface_img = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
                     bg_img = Image.open(bg_file).convert("RGBA")
                     
@@ -226,13 +231,13 @@ async def _run_generation(task_id: str, workflow: dict, generate_type: str, bg_f
                     bg_data = bg_img.load()
                     
                     width, height = surface_img.size
-                    tolerance = config.generation.surface_background_tolerance
+                    actual_tolerance = tolerance if tolerance is not None else config.generation.surface_background_tolerance
                     for y in range(height):
                         for x in range(width):
                             sr, sg, sb, sa = surface_data[x, y]
                             br, bg, bb, ba = bg_data[x, y]
                             
-                            if abs(sr - br) <= tolerance and abs(sg - bg) <= tolerance and abs(sb - bb) <= tolerance:
+                            if abs(sr - br) <= actual_tolerance and abs(sg - bg) <= actual_tolerance and abs(sb - bb) <= actual_tolerance:
                                 surface_data[x, y] = (0, 0, 0, 0)
                                 
                     out_buffer = io.BytesIO()
@@ -347,9 +352,10 @@ async def generate_texture(
         "image_urls": [],
         "error": None,
         "generate_type": request.generate_type,
+        "bg_file": str(bg_file) if bg_file else None,
     }
 
-    background_tasks.add_task(_run_generation, task_id, workflow, request.generate_type, bg_file)
+    background_tasks.add_task(_run_generation, task_id, workflow, request.generate_type, bg_file, request.surface_background_tolerance)
 
     return GenerateResponse(
         task_id=task_id,
@@ -427,9 +433,11 @@ async def list_materials(material_type: str | None = None):
 @router.get("/config/prompts", response_model=PromptsConfigResponse)
 async def get_prompts_config():
     """返回系统提示词默认值, 供前端预填充输入框"""
+    config = load_config()
     return PromptsConfigResponse(
         system_positive=SYSTEM_PROMPT_POSITIVE,
         system_negative=SYSTEM_PROMPT_NEGATIVE,
+        surface_background_tolerance=config.generation.surface_background_tolerance,
     )
 
 
@@ -569,10 +577,76 @@ async def discard_task_material(task_id: str):
     image_urls = task_info.get("image_urls", [])
     
     for url in image_urls:
-        filename = url.split("/")[-1]
+        filename = url.split("/")[-1].split("?")[0]
         filepath = OUTPUT_DIR / filename
         if filepath.exists():
             filepath.unlink()
+        raw_filepath = OUTPUT_DIR / filename.replace(".png", "_raw.png")
+        if raw_filepath.exists():
+            raw_filepath.unlink()
             
     task_info["status"] = "discarded"
     return {"status": "success"}
+
+@router.post("/{task_id}/reprocess")
+async def reprocess_task_material(task_id: str, request: ReprocessRequest):
+    """重新计算 surface 容差去背景"""
+    if task_id not in _task_store:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    
+    task_info = _task_store[task_id]
+    if task_info.get("generate_type") != "surface":
+        raise HTTPException(status_code=400, detail="只有 surface 可以重新处理背景")
+    if task_info.get("status") != "completed":
+        raise HTTPException(status_code=400, detail="任务未完成")
+        
+    bg_file_str = task_info.get("bg_file")
+    if not bg_file_str:
+        raise HTTPException(status_code=500, detail="找不到原背景图记录")
+    
+    bg_file = Path(bg_file_str)
+    if not bg_file.exists():
+        raise HTTPException(status_code=404, detail="背景图文件丢失")
+        
+    image_urls = task_info.get("image_urls", [])
+    if not image_urls:
+        raise HTTPException(status_code=500, detail="没有可处理的图片")
+        
+    url = image_urls[0]
+    filename = url.split("/")[-1].split("?")[0]
+    raw_filename = filename.replace(".png", "_raw.png")
+    
+    raw_filepath = OUTPUT_DIR / raw_filename
+    out_filepath = OUTPUT_DIR / filename
+    
+    if not raw_filepath.exists():
+        raise HTTPException(status_code=404, detail="找不到原始 surface 图片")
+        
+    try:
+        surface_img = Image.open(raw_filepath).convert("RGBA")
+        bg_img = Image.open(bg_file).convert("RGBA")
+        
+        if surface_img.size != bg_img.size:
+            bg_img = bg_img.resize(surface_img.size)
+            
+        surface_data = surface_img.load()
+        bg_data = bg_img.load()
+        
+        width, height = surface_img.size
+        actual_tolerance = request.tolerance
+        for y in range(height):
+            for x in range(width):
+                sr, sg, sb, sa = surface_data[x, y]
+                br, bg, bb, ba = bg_data[x, y]
+                
+                if abs(sr - br) <= actual_tolerance and abs(sg - bg) <= actual_tolerance and abs(sb - bb) <= actual_tolerance:
+                    surface_data[x, y] = (0, 0, 0, 0)
+                    
+        surface_img.save(out_filepath, format="PNG")
+        
+        new_url = f"{OUTPUT_URL_PREFIX}/{filename}?t={uuid.uuid4().hex[:8]}"
+        task_info["image_urls"] = [new_url]
+        return {"status": "success", "image_url": new_url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+

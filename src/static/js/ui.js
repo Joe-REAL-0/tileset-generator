@@ -26,6 +26,8 @@ const UI = {
         loraSelect: document.getElementById('loraSelect'),
         bgSelectorGroup: document.getElementById('bgSelectorGroup'),
         bgSelectorGrid: document.getElementById('bgSelectorGrid'),
+        toleranceGroup: document.getElementById('toleranceGroup'),
+        surfaceTolerance: document.getElementById('surfaceTolerance'),
         btnGenerate: document.getElementById('btnGenerate'),
 
         // 材质库页面
@@ -199,6 +201,7 @@ const UI = {
 
         if (page === 'atlas') {
             this.populateAtlasSelectors();
+            this.loadTilesets();
         }
         if (page === 'library') {
             this.loadLibraryImages();
@@ -215,6 +218,10 @@ const UI = {
 
         this.elements.bgSelectorGroup.style.display =
             (mode === 'surface') ? 'block' : 'none';
+        if (this.elements.toleranceGroup) {
+            this.elements.toleranceGroup.style.display =
+                (mode === 'surface') ? 'block' : 'none';
+        }
 
         const btn = this.elements.btnGenerate;
         if (mode === 'background') {
@@ -238,6 +245,9 @@ const UI = {
             const data = await resp.json();
             this.elements.systemPositivePrompt.value = data.system_positive || '';
             this.elements.systemNegativePrompt.value = data.system_negative || '';
+            if (data.surface_background_tolerance !== undefined && this.elements.surfaceTolerance) {
+                this.elements.surfaceTolerance.value = data.surface_background_tolerance;
+            }
         } catch (e) {
             console.error('加载系统提示词失败:', e);
         }
@@ -484,6 +494,45 @@ const UI = {
             hint.textContent = canGenerate
                 ? '已就绪，点击生成 Autotile 图集'
                 : '请在上方选择 1 张 Background 和 1 张 Surface 材质';
+        }
+    },
+
+    /** 加载已生成的图集列表 */
+    async loadTilesets() {
+        const grid = document.getElementById('atlasResultGrid');
+        if (!grid) return;
+        
+        grid.innerHTML = '<p class="placeholder-text">加载中...</p>';
+        
+        try {
+            const resp = await fetch('/api/tilesets');
+            const tilesets = await resp.json();
+            
+            if (tilesets.length === 0) {
+                grid.innerHTML = '<p class="placeholder-text">尚未生成任何图集</p>';
+                return;
+            }
+            
+            grid.innerHTML = '';
+            tilesets.forEach(ts => {
+                const card = document.createElement('div');
+                card.className = 'library-card';
+                card.innerHTML = `
+                    <div class="library-card-type type-surface" style="background-color: var(--accent-blue);">Tileset</div>
+                    <img src="${ts.tileset_url}" alt="${ts.filename}" loading="lazy" style="image-rendering: pixelated; object-fit: contain;">
+                    <div class="library-card-info" style="flex-direction: column; align-items: stretch; gap: 4px;">
+                        <span class="library-card-name" title="${ts.filename}" style="width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center;">${ts.filename}</span>
+                        <a href="${ts.tileset_url}" download class="btn btn-primary btn-sm" style="display: block; text-align: center;">⬇️ 下载</a>
+                    </div>
+                `;
+                const img = card.querySelector('img');
+                img.addEventListener('click', () => {
+                    this.showImageModal(ts.tileset_url);
+                });
+                grid.appendChild(card);
+            });
+        } catch (e) {
+            grid.innerHTML = '<p class="placeholder-text">加载失败</p>';
         }
     },
 

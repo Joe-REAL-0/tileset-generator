@@ -10,6 +10,24 @@
 from pathlib import Path
 from PIL import Image
 
+BLOB_TEMPLATE = [
+  [
+    "00010100", "00010101", "00000101", "00000100", "00011100", "00011111", "00000111", "00011101", "00010111", "01111111"
+  ],
+  [
+    "01010100", "01010101", "01000101", "01000100", "01111100", "11111111", "11000111", "01011100", "01110100", "11011111"
+  ],
+  [
+    "01010000", "01010001", "01000001", "01000000", "01110000", "11110001", "11000001", "01110001", "11010001", "11111101"
+  ],
+  [
+    "00010000", "00010001", "00000001", "00000000", "01000111", "11000101", "11110111", "01011111", "11110101", "01111101"
+  ],
+  [
+    None,       None,       None,       "01011101", "01010111", "01110101", "11010101", "11010111", "01110111", "11011101"
+  ]
+]
+
 
 class TilesetBuilder:
     """
@@ -27,9 +45,9 @@ class TilesetBuilder:
             tile_size: 每个 tile 的像素尺寸 (如 16, 32, 64, 128)
         """
         self.tile_size = tile_size
-        self.tiles: dict[int, Image.Image] = {}  # mask → tile
+        self.tiles: dict[str, Image.Image] = {}  # mask (str) → tile
 
-    def add_tile(self, mask: int, tile: Image.Image):
+    def add_tile(self, mask: str | int, tile: Image.Image):
         """
         添加一个 autotile 变体
 
@@ -42,61 +60,57 @@ class TilesetBuilder:
                 f"Tile 尺寸不匹配: 期望 {self.tile_size}×{self.tile_size}, "
                 f"收到 {tile.size}"
             )
+        if isinstance(mask, int):
+            mask = f"{mask:08b}"
         self.tiles[mask] = tile
 
     @property
     def grid_layout(self) -> tuple[int, int]:
         """
-        根据 tile 数量自动计算最接近正方形的 (columns, rows) 布局。
+        根据 BLOB_TEMPLATE 自动计算布局。
 
         Returns:
             (columns, rows): 列数和行数
         """
-        n = len(self.tiles)
-        # 取接近正方形: columns = ceil(sqrt(n))
-        columns = int(n ** 0.5)
-        if columns * columns < n:
-            columns += 1
-        rows = (n + columns - 1) // columns  # ceil division
+        rows = len(BLOB_TEMPLATE)
+        columns = max(len(row) for row in BLOB_TEMPLATE) if rows > 0 else 0
         return columns, rows
 
     def build(self) -> Image.Image:
         """
-        将所有 tile 拼接为一张紧密排列的大图 (无缝隙)。
-
-        布局示例 (16 个 tile → 4 列 × 4 行):
-        ┌────┬────┬────┬────┐
-        │  0 │  1 │  2 │  3 │
-        ├────┼────┼────┼────┤
-        │  4 │  5 │  6 │  7 │
-        ├────┼────┼────┼────┤
-        │  8 │  9 │ 10 │ 11 │
-        ├────┼────┼────┼────┤
-        │ 12 │ 13 │ 14 │ 15 │
-        └────┴────┴────┴────┘
-
+        将所有 tile 按 BLOB_TEMPLATE 拼接为一张紧密排列的大图 (无缝隙)。
+        如果模板中的位置为 None，则留出透明空白 tile 占位。
+        
         Returns:
             拼接完成的 RGBA 图集 Image
         """
-        if not self.tiles:
-            raise ValueError("没有添加任何 tile, 无法构建图集")
-
         columns, rows = self.grid_layout
-        tile_size = self.tile_size
+        if columns == 0 or rows == 0:
+            raise ValueError("BLOB_TEMPLATE 不能为空")
 
+        tile_size = self.tile_size
         atlas_w = columns * tile_size
         atlas_h = rows * tile_size
         atlas = Image.new("RGBA", (atlas_w, atlas_h), (0, 0, 0, 0))
 
-        # 按 mask 值排序, 确保布局稳定可预测
-        sorted_masks = sorted(self.tiles.keys())
-
-        for idx, mask in enumerate(sorted_masks):
-            col = idx % columns
-            row = idx // columns
-            x = col * tile_size
-            y = row * tile_size
-            atlas.paste(self.tiles[mask], (x, y))
+        for r, row in enumerate(BLOB_TEMPLATE):
+            for c, mask in enumerate(row):
+                if mask is not None:
+                    tile = self.tiles.get(mask)
+                    if tile is None:
+                        # 容错：如果用户传入的是int而不是str
+                        try:
+                            # Try integer if available
+                            tile = self.tiles.get(f"{int(mask, 2):08b}")
+                        except ValueError:
+                            pass
+                    
+                    if tile:
+                        x = c * tile_size
+                        y = r * tile_size
+                        atlas.paste(tile, (x, y))
+                    else:
+                        print(f"Warning: tile with mask {mask} was not added, skipping.")
 
         return atlas
 
@@ -106,27 +120,19 @@ class TilesetBuilder:
 
         Returns:
             (atlas_image, metadata_dict)
-
-        metadata 格式:
-        {
-            "tile_count": 47,
-            "tile_size": 32,
-            "columns": 8,
-            "rows": 6,
-            "image_size": [256, 192],
-            "format": "png",
-            "mask_map": {0x00: 0, 0x01: 1, ...}   # bitmask → tileset index
-        }
         """
         atlas = self.build()
         columns, rows = self.grid_layout
-        sorted_masks = sorted(self.tiles.keys())
 
-        # 构建 mask_map: bitmask 值 → atlas 中的 index
-        mask_map = {mask: idx for idx, mask in enumerate(sorted_masks)}
+        # 构建 mask_map: bitmask 值 → atlas 中的 (col, row)
+        mask_map = {}
+        for r, row in enumerate(BLOB_TEMPLATE):
+            for c, mask in enumerate(row):
+                if mask is not None:
+                    mask_map[mask] = {"col": c, "row": r}
 
         metadata = {
-            "tile_count": len(self.tiles),
+            "tile_count": sum(1 for row in BLOB_TEMPLATE for m in row if m is not None),
             "tile_size": self.tile_size,
             "columns": columns,
             "rows": rows,

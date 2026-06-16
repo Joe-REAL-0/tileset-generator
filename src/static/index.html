@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tileset Generator</title>
-    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/style.css?v=2">
 </head>
 
 <body>
@@ -112,6 +112,15 @@
                     </div>
                 </div>
 
+                <!-- Surface 模式: 背景图容差值 -->
+                <div class="input-group" id="toleranceGroup" style="display:none;">
+                    <label for="surfaceTolerance">
+                        背景图容差值 (Tolerance)
+                        <span class="label-hint">去除背景时的颜色容差值 (0-255)，过大可能误删内容，过小可能留有残影</span>
+                    </label>
+                    <input type="number" id="surfaceTolerance" class="material-input" min="0" max="255" value="32">
+                </div>
+
                 <!-- 生成按钮 -->
                 <div class="generate-action-row">
                     <button id="btnGenerate" class="btn btn-primary btn-large">
@@ -198,6 +207,14 @@
                     </button>
                     <p class="hint-text" id="atlasHint">请在上方选择 1 张 Background 和 1 张 Surface 材质</p>
                 </div>
+                
+                <!-- 生成图集展示框 -->
+                <div class="atlas-result" id="atlasResult" style="margin-top: 2rem; border-top: 1px solid var(--border-color); padding-top: 1rem;">
+                    <h3>✨ 已生成的图集库</h3>
+                    <div class="library-grid" id="atlasResultGrid">
+                        <p class="placeholder-text">加载中...</p>
+                    </div>
+                </div>
             </div>
         </section>
 
@@ -210,9 +227,9 @@
     </div>
 
     <!-- ── Scripts ── -->
-    <script src="/js/ws.js"></script>
-    <script src="/js/ui.js"></script>
-    <script src="/js/chat.js"></script>
+    <script src="/js/ws.js?v=2"></script>
+    <script src="/js/ui.js?v=2"></script>
+    <script src="/js/chat.js?v=2"></script>
 </body>
 
 </html>

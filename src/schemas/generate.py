@@ -44,6 +44,10 @@ class GenerateRequest(BaseModel):
         None,
         description="用户选择的 LoRA 文件名 (如 PreAlphaWoWTilesetsSDXL.safetensors)",
     )
+    surface_background_tolerance: int | None = Field(
+        None,
+        description="去除背景时的容差值 (0-255)，仅在 generate_type=surface 时有效",
+    )
 
 
 class GenerateResponse(BaseModel):
@@ -63,3 +67,9 @@ class PromptsConfigResponse(BaseModel):
     """系统提示词配置响应"""
     system_positive: str = ""
     system_negative: str = ""
+    surface_background_tolerance: int = 32
+
+
+class ReprocessRequest(BaseModel):
+    """重新处理 surface 纹理请求"""
+    tolerance: int = Field(..., description="新的背景容差值 (0-255)")

@@ -92,11 +92,24 @@ manager = ConnectionManager()
 async def websocket_endpoint(websocket: WebSocket, task_id: str):
     """
     WebSocket 端点: 前端连接此端点接收任务进度推送
-
-    连接后服务端持续推送状态更新, 直到任务完成或连接断开。
-    前端可在任务完成后主动关闭连接。
     """
     await manager.connect(task_id, websocket)
+    try:
+        from src.routers.tileset import _tileset_store
+        from src.routers.generate import _task_store
+        info = _tileset_store.get(task_id) or _task_store.get(task_id)
+        if info and info.get("status") in ("completed", "failed"):
+            await manager.send_progress(
+                task_id,
+                status=info["status"],
+                progress=100 if info["status"] == "completed" else 0,
+                message="已完成" if info["status"] == "completed" else "已失败",
+                image_url=info.get("tileset_url") or (info.get("image_urls")[0] if info.get("image_urls") else None),
+                error=info.get("error")
+            )
+    except Exception as e:
+        print(f"Error checking initial status on ws connect: {e}")
+
     try:
         # 保持连接活跃, 等待服务端推送消息
         while True:

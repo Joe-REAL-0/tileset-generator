@@ -15,6 +15,7 @@ const Chat = {
         const negativePrompt = UI.getNegativePrompt();
         const { checkpoint, lora } = UI.getModelSelection();
         const bgImageId = (mode === 'surface') ? UI.state.surfaceSelectedBgId : null;
+        const surfaceTolerance = UI.elements.surfaceTolerance ? parseInt(UI.elements.surfaceTolerance.value, 10) : null;
 
         const emoji = mode === 'background' ? '🎨' : '🖌️';
         const typeLabel = mode === 'background' ? 'Background' : 'Surface';
@@ -55,6 +56,9 @@ const Chat = {
 
             if (mode === 'surface' && bgImageId) {
                 body.background_image_id = bgImageId;
+                if (!isNaN(surfaceTolerance) && surfaceTolerance !== null) {
+                    body.surface_background_tolerance = surfaceTolerance;
+                }
             }
 
             const resp = await fetch('/api/generate', {
@@ -89,7 +93,7 @@ const Chat = {
                         wsClient.disconnect();
                     }
                 },
-                () => {}
+                () => { }
             );
         } catch (e) {
             UI.completeProgressMessage(
@@ -112,9 +116,22 @@ const Chat = {
                 const typeLabel = type === 'background' ? 'Background' : 'Surface';
                 const emoji = type === 'background' ? '🎨' : '🖌️';
 
+                let extraControls = '';
+                if (type === 'surface') {
+                    const defaultTol = UI.elements.surfaceTolerance ? UI.elements.surfaceTolerance.value : 32;
+                    extraControls = `
+                        <div class="surface-adjust" style="margin-top: 10px; display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,0.05); padding: 8px; border-radius: 4px;">
+                            <label style="font-size: 0.9rem;">容差重新去背: <span id="tol_val_${taskId}">${defaultTol}</span></label>
+                            <input type="range" min="0" max="255" value="${defaultTol}" oninput="document.getElementById('tol_val_${taskId}').textContent = this.value">
+                            <button class="btn btn-accent btn-sm" onclick="Chat.adjustTolerance('${taskId}', this.previousElementSibling.value, this)">更新预览</button>
+                        </div>
+                    `;
+                }
+
                 const actionHtml = `
+                    ${extraControls}
                     <div class="material-actions" style="margin-top: 10px; display: flex; gap: 10px;">
-                        <button class="btn btn-success btn-sm" onclick="Chat.saveMaterial('${taskId}', '${name}', '${imageUrl}', '${type}', this)">💾 保存</button>
+                        <button class="btn btn-success btn-sm" onclick="Chat.saveMaterial('${taskId}', '${name}', '${type}', this)">💾 保存</button>
                         <button class="btn btn-danger btn-sm" onclick="Chat.discardMaterial('${taskId}', this)">🗑️ 丢弃</button>
                     </div>
                 `;
@@ -142,16 +159,26 @@ const Chat = {
         }
     },
 
-    async saveMaterial(taskId, name, imageUrl, type, btnEl) {
+    async saveMaterial(taskId, name, type, btnEl) {
         try {
             const resp = await fetch(`/api/generate/${taskId}/save`, { method: 'POST' });
             if (!resp.ok) throw new Error('保存失败');
-            
+
             const actionsDiv = btnEl.parentElement;
+            const contentDiv = actionsDiv.parentElement;
+            const imgEl = contentDiv.querySelector('img.message-image');
+            const finalImageUrl = imgEl ? imgEl.src : '';
+
+            // hide adjust controls if it's surface
+            const adjustDiv = contentDiv.querySelector('.surface-adjust');
+            if (adjustDiv) {
+                adjustDiv.style.display = 'none';
+            }
+
             actionsDiv.innerHTML = '<span style="color: var(--success-color); font-size: 0.9rem;">✅ 已保存，可在「材质库」中使用</span>';
-            
+
             // 记录材质状态
-            UI.addMaterial(taskId, name, imageUrl);
+            UI.addMaterial(taskId, name, finalImageUrl);
             UI.setMaterialType(taskId, type);
 
             // 刷新 Surface 模式的背景图选择器
@@ -167,12 +194,18 @@ const Chat = {
         try {
             const resp = await fetch(`/api/generate/${taskId}/discard`, { method: 'POST' });
             if (!resp.ok) throw new Error('丢弃失败');
-            
+
             const actionsDiv = btnEl.parentElement;
             actionsDiv.innerHTML = '<span style="color: var(--danger-color); font-size: 0.9rem;">🗑️ 已丢弃</span>';
-            
+
             // 使图片变灰，表明已不可用
             const contentDiv = actionsDiv.parentElement;
+
+            const adjustDiv = contentDiv.querySelector('.surface-adjust');
+            if (adjustDiv) {
+                adjustDiv.style.display = 'none';
+            }
+
             const imgEl = contentDiv.querySelector('img.message-image');
             if (imgEl) {
                 imgEl.style.opacity = '0.4';
@@ -180,6 +213,47 @@ const Chat = {
             }
         } catch (e) {
             UI.addMessage('system', `❌ 丢弃失败: ${e.message}`);
+        }
+    },
+
+    async adjustTolerance(taskId, tolerance, btnEl) {
+        const originalText = btnEl.textContent;
+        btnEl.disabled = true;
+        btnEl.textContent = '计算中...';
+        try {
+            const resp = await fetch(`/api/generate/${taskId}/reprocess`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tolerance: parseInt(tolerance, 10) })
+            });
+            if (!resp.ok) {
+                const err = await resp.json();
+                throw new Error(err.detail || '重新计算失败');
+            }
+            const data = await resp.json();
+
+            const contentDiv = btnEl.closest('.message-content') || btnEl.parentElement.parentElement;
+            if (contentDiv) {
+                let imgEl = contentDiv.querySelector('img.message-image') || contentDiv.querySelector('img');
+
+                // 终极兜底方案：在整个文档里找包含这个 taskId 的图片
+                if (!imgEl) {
+                    imgEl = document.querySelector(`img[src*="${taskId}"]`);
+                }
+
+                if (imgEl) {
+                    imgEl.src = data.image_url;
+                } else {
+                    UI.addMessage('system', `❌ 错误: 找不到图片元素。DOM内容: ${contentDiv.innerHTML.substring(0, 100)}...`);
+                }
+            } else {
+                UI.addMessage('system', '❌ 错误: 找不到消息框元素');
+            }
+        } catch (e) {
+            UI.addMessage('system', `❌ 重新处理失败: ${e.message}`);
+        } finally {
+            btnEl.disabled = false;
+            btnEl.textContent = originalText;
         }
     },
 
@@ -192,21 +266,95 @@ const Chat = {
             return;
         }
 
-        const bgName = bgId; // UI._renderAtlasGrid now uses filenames directly
+        const bgName = bgId;
         const sfName = sfId;
+
+        // 生成过程中禁用按钮并更改文本
+        if (UI.elements.btnTileset) {
+            UI.elements.btnTileset.disabled = true;
+            UI.elements.btnTileset.textContent = '⏳ 生成中...';
+        }
+
+        const restoreButton = () => {
+            if (UI.elements.btnTileset) {
+                UI.elements.btnTileset.textContent = '🧩 生成 Autotile';
+                UI.updateTilesetButton();
+            }
+        };
 
         UI.addMessage('user', `🧩 生成 Autotile: BG=<b>${bgName}</b> + Surface=<b>${sfName}</b> (${tileSize}px)`);
 
         const progress = UI.addProgressMessage();
-        UI.updateProgress(progress.msgId, 100, '完成');
-        UI.completeProgressMessage(
-            progress.msgId, null,
-            `✅ 已记录图集生成任务。`,
-            `
-            <div style="color:var(--accent-blue);font-weight:bold;margin-top:8px;">
-                TODO: 图集生成的具体逻辑暂时没开发完成，敬请期待！
-            </div>
-            `
-        );
+        UI.updateProgress(progress.msgId, 5, '正在提交图集生成任务...');
+
+        try {
+            const resp = await fetch('/api/tileset', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    background_image_id: bgName,
+                    surface_image_id: sfName,
+                    tile_size: tileSize
+                }),
+            });
+
+            if (!resp.ok) {
+                const err = await resp.json();
+                throw new Error(err.detail || '请求失败');
+            }
+
+            const data = await resp.json();
+            const taskId = data.task_id;
+
+            UI.updateProgress(progress.msgId, 10, '正在生成图集...');
+
+            // WebSocket 跟踪进度
+            wsClient.connect(
+                taskId,
+                (msg) => {
+                    if (msg.status === 'processing' || msg.status === 'composing' || msg.status === 'loading') {
+                        UI.updateProgress(progress.msgId, msg.progress || 0, msg.message || '处理中...');
+                    } else if (msg.status === 'completed') {
+                        // 在对话框里显示结果
+                        UI.completeProgressMessage(
+                            progress.msgId, msg.image_url,
+                            `✅ ${msg.message || '图集生成完成!'}`,
+                            `<a href="${msg.image_url}" download class="btn btn-success btn-sm" style="margin-top:8px;display:inline-block;">⬇️ 下载图集</a>`
+                        );
+
+                        // 更新生成图集页面的展示区并滚动
+                        UI.loadTilesets().then(() => {
+                            const grid = document.getElementById('atlasResultGrid');
+                            if (grid) {
+                                grid.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                            }
+                        });
+
+                        // 全屏展示图片
+                        UI.showImageModal(msg.image_url);
+
+                        restoreButton();
+                        wsClient.disconnect();
+                    } else if (msg.status === 'failed') {
+                        UI.completeProgressMessage(
+                            progress.msgId, null,
+                            `❌ 图集生成失败: ${msg.error || '未知错误'}`
+                        );
+                        restoreButton();
+                        wsClient.disconnect();
+                    }
+                },
+                () => {
+                    restoreButton();
+                }
+            );
+
+        } catch (e) {
+            UI.completeProgressMessage(
+                progress.msgId, null,
+                `❌ 请求失败: ${e.message}`
+            );
+            restoreButton();
+        }
     },
 };
